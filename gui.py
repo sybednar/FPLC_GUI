@@ -519,8 +519,10 @@ class DataAcquisitionApp(QMainWindow):
         self.max_y_value = self.selected_AUFS_value
         self.selected_uv_monitor = "Pharmacia UV MII"
         self.metadata_written = False
-        self.mode = 'Manual'
+        #self.mode = 'Manual'
         self.gpio17_mode = 'OFF'
+        self.manual_mode_enabled = False
+
 
         # Data storage
         self.elapsed_time_data = []
@@ -578,9 +580,9 @@ class DataAcquisitionApp(QMainWindow):
         right_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # Left-side buttons
-        self.left_button1 = QPushButton("Manual", container)
-        self.left_button1.setGeometry(50, 60, 100, 30)
-        self.left_button1.clicked.connect(self.handle_left_button1_click)
+        self.manual_mode_button = QPushButton("Manual", container)
+        self.manual_mode_button.setGeometry(50, 60, 100, 30)
+        self.manual_mode_button.clicked.connect(self.handle_manual_mode_button_click)
 
         self.left_button2 = QPushButton("Method", container)
         self.left_button2.setGeometry(50, 100, 100, 30)
@@ -677,8 +679,15 @@ class DataAcquisitionApp(QMainWindow):
         self.divert_valve_button = QPushButton("Diversion Valve", container)
         self.divert_valve_button.setGeometry(652, 440, 100, 30)
 
-    def handle_left_button1_click(self):
-        print("Left Button 1 clicked")
+    def handle_manual_mode_button_click(self):
+        self.manual_mode_enabled = not self.manual_mode_enabled
+        self.left_button1.setText("Manual (ON)" if self.manual_mode_enabled else "Manual")
+
+        if self.manual_mode_enabled:
+            print("Manual mode enabled")
+        else:
+            print("Manual moded disabled")
+        self.update_manual_controls()
 
     def handle_left_button2_click(self):
         print("Left Button 2 clicked")
@@ -704,6 +713,13 @@ class DataAcquisitionApp(QMainWindow):
     def handle_right_button4_click(self):
         print("Right Button 4 clicked")
 
+    def update_manual_controls(self):
+        is_connected = self.connection is not None and self.connection.fileno() != -1
+        enable_controls = self.manual_mode_enabled and is_connected
+        self.start_button.setEnabled(enable_controls)
+        self.pause_button.setEnabled(enable_controls)
+        self.stop_save_button.setEnabled(enable_controls)
+
     def toggle_gpio17(self):
         self.gpio17_mode = toggle_gpio17(self.gpio17_mode)
         self.gpio17_button.setText(f"GPIO17-{self.gpio17_mode}")
@@ -721,6 +737,7 @@ class DataAcquisitionApp(QMainWindow):
                 self.connection = self.server.accept_connection()
                 self.connection_status_label.setText("FPLC connected")
                 self.connection_status_label.setStyleSheet("background-color: green; color: white; border: 1px solid black;")
+                self.update_manual_controls()
             else:
                 try:
                     self.connection.sendall('HEARTBEAT'.encode('utf-8'))
@@ -969,7 +986,7 @@ class DataAcquisitionApp(QMainWindow):
         self.connection = None
         self.connection_status_label.setText("FPLC not connected")
         self.connection_status_label.setStyleSheet("background-color: red; color: white; border: 1px solid black;")
-        #self.connection = self.server.accept_connection()
+        self.update_manual_controls()
 
     def close_application(self):
         self.close()
