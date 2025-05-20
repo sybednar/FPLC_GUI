@@ -1,0 +1,14 @@
+
+# Ignore virtual environment
+/home/sybednar/FPLC_controller_venv/
+
+# Ignore Python cache and logs
+__pycache__/
+*.pyc
+*.log
+
+# Ignore data and plots
+*.csv
+*.png
+data_temp.csv
+Scanning_log_files/
