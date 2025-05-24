@@ -1,4 +1,4 @@
-#gui.py
+#gui.py (ver0.2)
 # Imports and setup
 import sys
 import os
@@ -12,15 +12,57 @@ from time import sleep
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QMessageBox, QVBoxLayout, QHBoxLayout,
     QWidget, QLabel, QPushButton, QComboBox, QSpinBox, QDoubleSpinBox,
-    QGridLayout, QDialog
+    QGridLayout, QDialog, QDialogButtonBox
 )
 from PySide6.QtCore import Signal, QObject, Qt
 from PySide6.QtGui import QFont
 import pyqtgraph as pg
+import socket
 from network import FPLCServer
 from hardware import set_gpio17, toggle_gpio17
 from plotting import create_plot_widget, update_plot
 from data_logger import DataLogger
+from listener import ReceiveClientSignalsAndData
+
+
+
+
+
+class OpenMethodModeDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Method Options")
+        self.setMinimumWidth(400)
+
+        layout = QVBoxLayout()
+        font = self.font()
+        font.setPointSize(16)
+        self.setFont(font)
+        label = QLabel("Choose an option:")
+        layout.addWidget(label)
+
+        self.buttons = QDialogButtonBox()
+        self.exit_button = self.buttons.addButton("Exit", QDialogButtonBox.ButtonRole.RejectRole)
+        self.open_button = self.buttons.addButton("Open Method File", QDialogButtonBox.ButtonRole.ActionRole)
+        self.create_button = self.buttons.addButton("Create New Method", QDialogButtonBox.ButtonRole.AcceptRole)
+
+        layout.addWidget(self.buttons)
+        self.setLayout(layout)
+
+        self.buttons.clicked.connect(self.on_button_clicked)
+        self.selected_option = None
+
+    def on_button_clicked(self, button):
+        if button == self.exit_button:
+            self.selected_option = "Exit"
+            self.reject()
+        elif button == self.open_button:
+            self.selected_option = "Open"
+            self.accept()
+        elif button == self.create_button:
+            self.selected_option = "Create"
+            self.accept()
+
 
 class RunTimeDialog(QDialog):
     def __init__(self, parent=None):
@@ -250,6 +292,19 @@ class AUFS_WarningDialog(QDialog):
         layout.addWidget(self.confirm_button)
         self.setLayout(layout)
 
+class SetPumpAVolume_WarningDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Warning")
+        self.setMinimumWidth(300)  # Adjust the width as needed
+        layout = QVBoxLayout()
+        self.label = QLabel("Set PumpA volume > 0 ml/min")
+        layout.addWidget(self.label)
+        self.confirm_button = QPushButton("Confirm")
+        self.confirm_button.clicked.connect(self.accept)
+        layout.addWidget(self.confirm_button)
+        self.setLayout(layout)
+
 class PauseDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -376,7 +431,7 @@ class UV_Monitor_Dialog(QDialog):
             if self.parent().selected_AUFS_value <= 0.01:
                 self.parent().selected_AUFS_value = 0.01
         self.parent().selected_uv_monitor = selected_uv_monitor_text
-        super().accept()
+        super().accept()   
 
 class FractionCollectorErrorDialog(QDialog):
     def __init__(self, parent=None):
@@ -395,6 +450,7 @@ class FractionCollectorErrorDialog(QDialog):
 
     def exit_error_dialog(self):
         if self.error_cleared:
+            print("Calling accept()")
             self.accept()# Close the dialog
             self.parent().stop_save_acquisition()# Activate the Stop and Save function
         else:
@@ -403,6 +459,155 @@ class FractionCollectorErrorDialog(QDialog):
     def set_error_cleared(self):
         self.error_cleared = True # Update error status
 
+
+class SolventExchangeDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Solvent Exchange")
+        self.setMinimumWidth(300)
+
+        layout = QVBoxLayout()
+
+        self.pumpA_button = QPushButton("PumpA (OFF)")
+        #self.pumpA_button.setStyleSheet("background-color: lightgray;")
+        self.pumpA_button.clicked.connect(self.toggle_pumpA)
+        layout.addWidget(self.pumpA_button)
+
+        self.pumpB_button = QPushButton("PumpB (OFF)")
+        #self.pumpB_button.setStyleSheet("background-color: lightgray;")
+        self.pumpB_button.clicked.connect(self.toggle_pumpB)
+        layout.addWidget(self.pumpB_button)
+
+        self.start_wash_button = QPushButton("Start Wash")
+        self.start_wash_button.clicked.connect(self.start_wash)
+        layout.addWidget(self.start_wash_button)
+
+        self.exit_button = QPushButton("Exit")
+        self.exit_button.clicked.connect(self.exit_dialog)
+        layout.addWidget(self.exit_button)
+
+        self.setLayout(layout)
+
+    def toggle_pumpA(self):
+        self.parent().wash_pumpA = not self.parent().wash_pumpA
+        if self.parent().wash_pumpA:
+            self.pumpA_button.setText("PumpA_Wash ON")
+            self.pumpA_button.setStyleSheet("background-color: green; color: white;")
+        else:
+            self.pumpA_button.setText("PumpA_Wash OFF")
+            self.pumpA_button.setStyleSheet("background-color: lightgray;")
+
+    def toggle_pumpB(self):
+        self.parent().wash_pumpB = not self.parent().wash_pumpB
+        if self.parent().wash_pumpB:
+            self.pumpB_button.setText("PumpB_Wash ON")
+            self.pumpB_button.setStyleSheet("background-color: green; color: white;")
+        else:
+            self.pumpB_button.setText("PumpB_Wash OFF")
+            self.pumpB_button.setStyleSheet("background-color: lightgray;")
+
+    def start_wash(self):
+        if self.parent().connection:
+            if self.parent().wash_pumpA:
+                print("WASH_A signal sent")
+                self.parent().connection.sendall('WASH_PUMP_A'.encode('utf-8'))
+            if self.parent().wash_pumpB:
+                print("WASH_B signal sent")
+                self.parent().connection.sendall('WASH_PUMP_B'.encode('utf-8'))
+
+    def exit_dialog(self):
+        self.parent().wash_pumpA = False
+        self.parent().wash_pumpB = False
+        self.pumpA_button.setText("PumpA OFF")
+        self.pumpA_button.setStyleSheet("background-color: lightgray;")
+        self.pumpB_button.setText("PumpB OFF")
+        self.pumpB_button.setStyleSheet("background-color: lightgray;")
+        self.close()
+
+class pumpA_isocratic_Dialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("PumpA Isocratic")
+        self.setMinimumWidth(200)  # Adjust the width as needed
+
+        # Create the main vertical layout
+        main_layout = QVBoxLayout()
+
+        # Create a horizontal layout for the spin box and label
+        h_layout = QHBoxLayout()
+
+        # Create a double spin box for ml/min
+        self.pumpA_ml_spinbox = QDoubleSpinBox()
+        self.pumpA_ml_spinbox.setRange(0, 99)  # 0 to 99 ml
+        self.pumpA_ml_spinbox.setSingleStep(1)  # Increment by 1.0
+        self.pumpA_ml_spinbox.setDecimals(1)  # Display one decimal place
+        self.pumpA_ml_spinbox.setMinimumWidth(75)
+        self.pumpA_ml_spinbox.setMinimumHeight(100)
+
+        # Apply custom styles to increase contrast of up/down arrows
+        style = """
+        QDoubleSpinBox {
+            background-color: #2c2c2c;  /* Dark background for the spin box */
+            color: #ffffff;  /* White text */
+            border: 1px solid #444444;  /* Border color */
+            font-size: 36px;  /* Increase font size */
+        }
+        QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
+            background-color: #444444;  /* Dark background for buttons */
+            border: none;  /* Remove border */
+            width: 40px;  /* Increase button width */
+            height: 40px;  /* Increase button height */
+            background-position: center;  /* Center the images */
+            background-repeat: no-repeat;  /* Do not repeat the images */
+        }
+        QDoubleSpinBox::up-button {
+            background-image: url(/home/sybednar/FPLC_controller_venv/FPLC_server/FPLC_GUI_customization/uparrow_3pt_white.png);
+        }
+        QDoubleSpinBox::down-button {
+            background-image: url(/home/sybednar/FPLC_controller_venv/FPLC_server/FPLC_GUI_customization/downarrow_3pt_white.png);
+        }
+        QDoubleSpinBox::up-button:hover, QSpinBox::down-button:hover {
+            background-color: #555555;  /* Lighter background on hover */
+        }
+        """
+        self.pumpA_ml_spinbox.setStyleSheet(style)
+        font = self.font()
+        font.setPointSize(24)  # Increase font size
+        self.setFont(font)
+
+        # Add the spin box and label to the horizontal layout
+        h_layout.addWidget(self.pumpA_ml_spinbox)
+        h_layout.addWidget(QLabel("PumpA (ml)"), alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # Add the horizontal layout to the main vertical layout
+        main_layout.addLayout(h_layout)
+
+        font = self.font()
+        font.setPointSize(16)
+        self.setFont(font)
+
+        self.confirm_button = QPushButton("Confirm")
+        self.confirm_button.clicked.connect(self.accept)
+        main_layout.addWidget(self.confirm_button, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self.setLayout(main_layout)
+        self.load_saved_values()  # Load previously saved values
+        
+    def load_saved_values(self):
+        # Load saved values from the parent (assuming you save them there)
+        if hasattr(self.parent(), 'saved_pumpA_volume'):
+            pumpA_ml = self.parent().saved_pumpA_volume
+            self.pumpA_ml_spinbox.setValue(pumpA_ml)
+
+    def accept(self):
+        # Save the values upon acceptance
+        self.parent().saved_pumpA_volume = self.pumpA_ml_spinbox.value()
+        super().accept()
+
+    def get_pumpA_volume(self):
+        return self.pumpA_ml_spinbox.value()
+    
+
 # Worker class for background data acquisition
 class Worker(QObject):
     data_signal = Signal(float, float, float, float, float)
@@ -410,9 +615,8 @@ class Worker(QObject):
     error_signal = Signal(str)
     error_cleared_signal = Signal(str)
 
-    def __init__(self, mode, run_time, channels, write_to_csv_callback, main_app, selected_uv_monitor, selected_AUFS_value, connection):
+    def __init__(self, run_time, channels, write_to_csv_callback, main_app, selected_uv_monitor, selected_AUFS_value, connection):
         super().__init__()
-        self.mode = mode
         self.run_time = run_time
         self.channels = channels
         self.is_running = False
@@ -432,43 +636,45 @@ class Worker(QObject):
         self.is_running = True
         while self.is_running and not self.stop_event.is_set():
             self.pause_event.wait()
-            try:
-                data = self.connection.recv(1024)
-                if not data:
-                    self.main_app.handle_disconnection()
-                    continue
-                self.handle_error_messages(data.decode('utf-8'))
-                values = data.decode('utf-8').split(',')
-                if len(values) == 5:
-                    value1 = int(values[0])
-                    value2 = int(values[1])
-                    elapsed_time = float(values[2])
-                    eluate_volume = float(values[3])
-                    frac_mark = float(values[4])
-                    Chan1 = (value1 / 32768.0) * 0.256
-                    Chan2 = (value2 / 32768.0) * 0.256
-                    if self.selected_uv_monitor == "Pharmacia UV MII":
-                        Chan1_AU280 = max(0.001, round(Chan1 * (self.selected_AUFS_value / 0.1), 4))
-                    elif self.selected_uv_monitor == "BioRad EM1":
-                        Chan1_AU280 = max(0.001, round(Chan1 * (self.selected_AUFS_value / 1.0), 4))
-                    self.data_signal.emit(elapsed_time, frac_mark, Chan1, Chan1_AU280, Chan2)
-                else:
-                    print("Received malformed data")
-            except socket.error:
-                self.main_app.handle_disconnection()
-                continue
-            sleep(0.1)
+            time.sleep(0.1)
         self.is_running = False
         self.finished.emit()
-
-    def handle_error_messages(self, message):
+            
+            
+    def handle_data_received(self, message):
+        # This is called by the centralized listener
         if "Fraction Collector error" in message:
             if not self.error_emitted:
-                self.error_signal.emit("Frac-200 error has occurred. \\nClear error before continuing..")
+                self.error_signal.emit("Frac-200 error has occurred.\nClear error before continuing..")
                 self.error_emitted = True
+            return
         elif "Fraction Collector Error has been cleared" in message:
             self.error_cleared_signal.emit("Fraction Collector Error has been cleared")
             self.error_emitted = False
+            return            
+
+        values = message.split(',')
+        if len(values) == 5:
+            try:
+                value1 = int(values[0])
+                value2 = int(values[1])
+                elapsed_time = float(values[2])
+                eluate_volume = float(values[3])
+                frac_mark = float(values[4])
+                Chan1 = (value1 / 32768.0) * 0.256
+                Chan2 = (value2 / 32768.0) * 0.256
+                if self.selected_uv_monitor == "Pharmacia UV MII":
+                    Chan1_AU280 = max(0.001, round(Chan1 * (self.selected_AUFS_value / 0.1), 4))
+                elif self.selected_uv_monitor == "BioRad EM1":
+                    Chan1_AU280 = max(0.001, round(Chan1 * (self.selected_AUFS_value / 1.0), 4))
+                else:
+                    Chan1_AU280 = Chan1
+                self.data_signal.emit(elapsed_time, frac_mark, Chan1, Chan1_AU280, Chan2)
+            except ValueError: 
+                print("Error parsing acquisition data:", message)
+        else:
+            print("Received malformed data:", message) 
+
 
     def pause(self):
         self.pause_start_time = time.time()
@@ -485,7 +691,7 @@ class Worker(QObject):
         self.is_running = False
         self.stop_event.set()
         
-class DataAcquisitionApp(QMainWindow):
+class FPLCSystemApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
@@ -500,6 +706,7 @@ class DataAcquisitionApp(QMainWindow):
         self.connection = None
         self.worker = None
         self.thread = None
+        self.error_dialog_open = False
         self.channels = [0, 1]
         self.num_channels = len(self.channels)
         self.scan_rate = 10
@@ -519,10 +726,20 @@ class DataAcquisitionApp(QMainWindow):
         self.max_y_value = self.selected_AUFS_value
         self.selected_uv_monitor = "Pharmacia UV MII"
         self.metadata_written = False
-        #self.mode = 'Manual'
         self.gpio17_mode = 'OFF'
         self.manual_mode_enabled = False
-
+        self.method_mode = None # Tracks 'Open', 'Create', or None
+        self.wash_pumpA = False
+        self.wash_pumpB = False
+        self.elution_method = "Isocratic"
+        self.pumpA_button = None
+        self.pumpA_volume = 0
+        self.saved_pumpA_volume = 0
+        self.last_pumpA_volume = 0
+        self.run_pumpA = False
+        self.pumpB_button = None
+        self.pump_listener = None
+        
 
         # Data storage
         self.elapsed_time_data = []
@@ -580,38 +797,38 @@ class DataAcquisitionApp(QMainWindow):
         right_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # Left-side buttons
-        self.manual_mode_button = QPushButton("Manual", container)
+        self.manual_mode_button = QPushButton("Manual (OFF)", container)
         self.manual_mode_button.setGeometry(50, 60, 100, 30)
         self.manual_mode_button.clicked.connect(self.handle_manual_mode_button_click)
 
-        self.left_button2 = QPushButton("Method", container)
-        self.left_button2.setGeometry(50, 100, 100, 30)
-        self.left_button2.clicked.connect(self.handle_left_button2_click)
+        self.method_mode_button = QPushButton("Method", container)
+        self.method_mode_button.setGeometry(50, 100, 100, 30)
+        self.method_mode_button.clicked.connect(self.handle_method_mode_button_click)
 
-        self.left_button3 = QPushButton("Run_Method", container)
-        self.left_button3.setGeometry(50, 200, 100, 30)
-        self.left_button3.clicked.connect(self.handle_left_button3_click)
+        self.method_run_button = QPushButton("Run_Method", container)
+        self.method_run_button.setGeometry(50, 200, 100, 30)
+        self.method_run_button.clicked.connect(self.handle_method_run_button_click)
 
-        self.left_button4 = QPushButton("Pause_Method", container)
-        self.left_button4.setGeometry(50, 240, 100, 30)
-        self.left_button4.clicked.connect(self.handle_left_button4_click)
+        self.method_pause_button = QPushButton("Pause_Method", container)
+        self.method_pause_button.setGeometry(50, 240, 100, 30)
+        self.method_pause_button.clicked.connect(self.handle_method_pause_button_click)
 
-        self.left_button5 = QPushButton("Stop_Method", container)
-        self.left_button5.setGeometry(50, 280, 100, 30)
-        self.left_button5.clicked.connect(self.handle_left_button5_click)
+        self.method_stop_button = QPushButton("Stop_Method", container)
+        self.method_stop_button.setGeometry(50, 280, 100, 30)
+        self.method_stop_button.clicked.connect(self.handle_method_stop_button_click)
 
         # Right-side buttons
-        self.right_button1 = QPushButton("Peak_ID", container)
-        self.right_button1.setGeometry(874, 60, 100, 30)
-        self.right_button1.clicked.connect(self.handle_right_button1_click)
+        self.Peak_ID_button = QPushButton("Peak_ID", container)
+        self.Peak_ID_button.setGeometry(874, 60, 100, 30)
+        self.Peak_ID_button.clicked.connect(self.handle_Peak_ID_button_click)
 
-        self.right_button2 = QPushButton("Baseline_Corr", container)
-        self.right_button2.setGeometry(874, 100, 100, 30)
-        self.right_button2.clicked.connect(self.handle_right_button2_click)
+        self.Baseline_Corr_button = QPushButton("Baseline_Corr", container)
+        self.Baseline_Corr_button.setGeometry(874, 100, 100, 30)
+        self.Baseline_Corr_button.clicked.connect(self.handle_Baseline_Corr_button_click)
 
-        self.right_button3 = QPushButton("Peak Smoothing", container)
-        self.right_button3.setGeometry(874, 140, 100, 30)
-        self.right_button3.clicked.connect(self.handle_right_button3_click)
+        self.Peak_Smoothing_button = QPushButton("Peak_Smoothing", container)
+        self.Peak_Smoothing_button.setGeometry(874, 140, 100, 30)
+        self.Peak_Smoothing_button.clicked.connect(self.handle_Peak_Smoothing_button_click)
 
         self.desktop_button = QPushButton("Desktop", container)
         self.desktop_button.setGeometry(874, 280, 100, 30)
@@ -649,6 +866,13 @@ class DataAcquisitionApp(QMainWindow):
         self.stop_save_button = QPushButton("Stop and Save", container)
         self.stop_save_button.setGeometry(432, 400, 100, 30)
         self.stop_save_button.clicked.connect(self.stop_save_acquisition)
+        
+        self.divert_valve_button = QPushButton("Diverter(OFF)", container)
+        self.divert_valve_button.setGeometry(542, 400, 100, 30)
+        #self.divert_valve_button.clicked.connect(self.toggle_divert_valve)
+               
+        self.injection_valve_button = QPushButton("Injection_Valve", container)
+        self.injection_valve_button.setGeometry(652, 400, 100, 30)
 
         # Additional labels
         settings_label = QLabel("Settings", container)
@@ -664,24 +888,31 @@ class DataAcquisitionApp(QMainWindow):
         Pumps_Valves_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # Pump and valve control buttons
-        self.pump_wash_button = QPushButton("Solvent Exchange", container)
+        self.pump_wash_button = QPushButton("Solvent Change", container)
         self.pump_wash_button.setGeometry(212, 440, 100, 30)
+        self.pump_wash_button.clicked.connect(self.open_solvent_exchange_dialog)
 
-        self.pump_direction_button = QPushButton("Direction <>", container)
-        self.pump_direction_button.setGeometry(322, 440, 100, 30)
+        self.isocratic_gradient_button = QPushButton("Isocratic", container)
+        self.isocratic_gradient_button.setGeometry(322, 440, 100, 30)
+        self.isocratic_gradient_button.clicked.connect(self.toggle_isocratic_gradient)
 
-        self.pump_run_standby_button = QPushButton("Run/Standby", container)
-        self.pump_run_standby_button.setGeometry(432, 440, 100, 30)
+        self.pumpA_button = QPushButton("Pump_A", container) #Run/Standby
+        self.pumpA_button.setGeometry(432, 440, 100, 30)
+        self.pumpA_button.clicked.connect(self.open_pumpA_dialog)
 
-        self.injection_valve_button = QPushButton("Injection_Valve", container)
-        self.injection_valve_button.setGeometry(542, 440, 100, 30)
+        self.pumpB_button = QPushButton("Pump_B", container) #Run/Standby
+        self.pumpB_button.setGeometry(542, 440, 100, 30)
+        self.pumpB_button.clicked.connect(self.open_pumpB_dialog)
 
-        self.divert_valve_button = QPushButton("Diversion Valve", container)
-        self.divert_valve_button.setGeometry(652, 440, 100, 30)
+        self.standby_run_pumps_button = QPushButton("StandBy", container)
+        self.standby_run_pumps_button.setGeometry(652, 440, 100, 30)
+        self.standby_run_pumps_button.clicked.connect(self.Standby_Run_pumps)
+
+
 
     def handle_manual_mode_button_click(self):
         self.manual_mode_enabled = not self.manual_mode_enabled
-        self.left_button1.setText("Manual (ON)" if self.manual_mode_enabled else "Manual")
+        self.manual_mode_button.setText("Manual (ON)" if self.manual_mode_enabled else "Manual (OFF)")
 
         if self.manual_mode_enabled:
             print("Manual mode enabled")
@@ -689,29 +920,45 @@ class DataAcquisitionApp(QMainWindow):
             print("Manual moded disabled")
         self.update_manual_controls()
 
-    def handle_left_button2_click(self):
-        print("Left Button 2 clicked")
+    def handle_method_mode_button_click(self):
+        self.manual_mode_enabled = False # Disable manual mode when Method dialog is opened
+        self.manual_mode_button.setText("Manual (OFF)")
+        self.update_manual_controls()
+        dialog = OpenMethodModeDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            if dialog.selected_option == "Open":
+                self.method_mode = "Open"
+                print("Open Method File selected")
+                # TODO: Add logic to open method file
+            elif dialog.selected_option == "Create":
+                self.method_mode = "Create"
+                print("Create New Method selected")
+                # TODO: Add logic to create new method
+        else:
+            # If user exits the dialog, re-enable manual mode
+            self.manual_mode_enabled = True
+            self.manual_mode_button.setText("Manual (ON)")
+            self.update_manual_controls()
+            print("Method dialog exited_Manual mode re-enabled")
 
-    def handle_left_button3_click(self):
+    def handle_method_run_button_click(self):
         print("Left Button 3 clicked")
 
-    def handle_left_button4_click(self):
+    def handle_method_pause_button_click(self):
         print("Left Button 4 clicked")
         
-    def handle_left_button5_click(self):
+    def handle_method_stop_button_click(self):
         print("Left Button 5 clicked")
 
-    def handle_right_button1_click(self):
-        print("Right Button 1 clicked")
+    def handle_Peak_ID_button_click(self):
+        print("Peak_ID Button clicked")
 
-    def handle_right_button2_click(self):
-        print("Right Button 2 clicked")
+    def handle_Baseline_Corr_button_click(self):
+        print("Baseline_Corr Button, set order of polynomial and iterations of baseline calculation")
 
-    def handle_right_button3_click(self):
-        print("Right Button 3 clicked")
-
-    def handle_right_button4_click(self):
-        print("Right Button 4 clicked")
+    def handle_Peak_Smoothing_button_click(self):
+        print("Peak_Smoothing Button, set Savitzky-Golay window length and polyorder values")
+   
 
     def update_manual_controls(self):
         is_connected = self.connection is not None and self.connection.fileno() != -1
@@ -738,15 +985,92 @@ class DataAcquisitionApp(QMainWindow):
                 self.connection_status_label.setText("FPLC connected")
                 self.connection_status_label.setStyleSheet("background-color: green; color: white; border: 1px solid black;")
                 self.update_manual_controls()
-            else:
-                try:
-                    self.connection.sendall('HEARTBEAT'.encode('utf-8'))
-                    data = self.connection.recv(1024)
-                    if not data:
-                        self.handle_disconnection()
-                except socket.error:
-                    self.handle_disconnection()
+
+                if not hasattr(self, 'listener') or self.listener is None:
+                    self.listener = ReceiveClientSignalsAndData(self.connection)
+                    self.listener.pumpA_wash_completed_signal.connect(self.handle_pumpA_wash_completed)
+                    self.listener.fraction_collector_error_signal.connect(self.handle_fraction_collector_error)
+                    self.listener.fraction_collector_error_cleared_signal.connect(self.handle_fraction_collector_error_cleared)
+
+                    if self.worker:
+                        self.listener.data_received_signal.connect(self.worker.handle_data_received)
+
+                    self.listener.start()
             time.sleep(5)
+
+    def open_solvent_exchange_dialog(self):
+        self.solvent_exchange_dialog = SolventExchangeDialog(self)
+        self.solvent_exchange_dialog.exec()
+        
+    def handle_pumpA_wash_completed(self):
+        if self.pumpA_button:
+            self.pumpA_button.setText("Pump OFF")
+        if hasattr(self, 'solvent_exchange_dialog') and self.solvent_exchange_dialog.isVisible():
+            self.solvent_exchange_dialog.close()
+        
+    def toggle_isocratic_gradient(self):
+        if self.elution_method == "Isocratic":
+            self.isocratic_gradient_button.setText("Gradient")
+            self.elution_method = "Gradient"
+            self.pumpB_button.setEnabled(True)
+        elif self.elution_method == "Gradient":
+            self.isocratic_gradient_button.setText("Isocratic")
+            self.elution_method = "Isocratic"
+            self.pumpB_button.setEnabled(False)
+            
+    def open_pumpA_dialog(self):
+        if self.elution_method == "Isocratic":
+            dialog = pumpA_isocratic_Dialog(self)                   
+            if dialog.exec() == QDialog.DialogCode.Accepted:   
+                new_pumpA_volume = dialog.get_pumpA_volume()  # Get the new volume from the dialog  
+                if new_pumpA_volume > 0:  # Check if the new pumpA_volume is valid  
+                    self.pumpA_volume = new_pumpA_volume  # Update the pumpA_volume  
+                    self.last_pumpA_volume = new_pumpA_volume  # Save the last valid pumpA_volume                      
+                    print(f"PumpA_Volume:{self.pumpA_volume} ml")
+                    if self.connection:
+                        try:
+                            self.connection.sendall(f'PumpA_Volume:{self.pumpA_volume}'.encode('utf-8'))
+                            print(f"Sent PumpA_Volume:{self.pumpA_volume} ml to client")
+                        except socket.error as e:
+                            print(f"Error sending PumpA_Volume: {e}")
+                            self.handle_disconnection()
+                else: 
+                    # If the new pumpA_volume is invalid, keep the last valid pumpA_volume 
+                    self.pumpA_volume = self.last_pumpA_volume     
+            
+        
+    def open_pumpB_dialog(self):
+        if self.elution_method == "Isocratic":
+            self.pumpB_button.setEnabled(False)
+        else:
+            print("PumpB Button clicked") #placeholder for additional logic
+
+    def Standby_Run_pumps(self):
+        if self.pumpA_volume <= 0.0:
+            set_pumpA_volume_warning_dialog = SetPumpAVolume_WarningDialog(self)
+            if set_pumpA_volume_warning_dialog.exec() == QDialog.DialogCode.Accepted:
+                self.open_pumpA_dialog()
+            return
+
+        if self.flowrate <= 0.0:
+            flowrate_warning_dialog = FlowRate_WarningDialog(self)
+            if flowrate_warning_dialog.exec() == QDialog.DialogCode.Accepted:
+                self.open_flowrate_dialog()
+            return
+
+        if self.run_pumpA == False:
+            self.run_pumpA = True
+            self.standby_run_pumps_button.setText("Pumps Running")
+            if self.connection is None or self.connection.fileno() == -1:
+                self.connection = self.server.accept_connection()
+            self.connection.sendall('START_PUMPS'.encode('utf-8'))
+
+        else:
+            self.run_pumpA = False
+            self.standby_run_pumps_button.setText("StandBy")
+            if self.connection is None or self.connection.fileno() == -1:
+                self.connection = self.server.accept_connection()
+            self.connection.sendall('STOP_PUMPS'.encode('utf-8'))
 
     def open_run_time_dialog(self):
         dialog = RunTimeDialog(self)
@@ -817,12 +1141,12 @@ class DataAcquisitionApp(QMainWindow):
         self.RunDateTime = datetime.strftime(datetime.now(), "%Y_%b_%d_%H%M%S")
         self.update_plot_title()
 
-        self.worker = Worker(self.mode, self.run_time, self.channels, self.logger.append_data_row, self, self.selected_uv_monitor, self.selected_AUFS_value, self.connection)
+        self.worker = Worker(self.run_time, self.channels, self.logger.append_data_row, self, self.selected_uv_monitor, self.selected_AUFS_value, self.connection)
+        self.listener.data_received_signal.connect(self.worker.handle_data_received)
         self.worker.data_signal.connect(self.update_plot_data)
         self.worker.finished.connect(self.enable_buttons)
         self.worker.error_signal.connect(self.handle_fraction_collector_error)
         self.worker.error_cleared_signal.connect(self.handle_fraction_collector_error_cleared)
-
         self.thread = threading.Thread(target=self.worker.run, name="WorkerThread")
         self.thread.start()
 
@@ -970,19 +1294,31 @@ class DataAcquisitionApp(QMainWindow):
             print("Paused the acquisition")
 
     def handle_fraction_collector_error(self, error_message):
+        if self.error_dialog_open:
+            return        
         print(f"Handling error: {error_message}")
+        self.error_dialog_open = True
         self.error_dialog = FractionCollectorErrorDialog(self)
         self.error_dialog.label.setText(error_message)
-        self.error_dialog.show()
+        self.error_dialog.finished.connect(self.reset_error_dialog_flag)
+        self.error_dialog.exec()
+        
+    def reset_error_dialog_flag(self):
+        self.error_dialog_open = False
 
     def handle_fraction_collector_error_cleared(self, message):
         print(f"Handling error cleared: {message}")
         if hasattr(self, 'error_dialog'):
-            self.error_dialog.accept()
-            self.stop_save_acquisition()
+            print(f"Dialog visible: {self.error_dialog.isVisible()}")
+            self.error_dialog.set_error_cleared()
+            self.error_dialog.exit_error_dialog()
+            #self.stop_save_acquisition()
 
     def handle_disconnection(self):
         print("Client disconnected. Attempting to reconnect...")
+        if self.listener:
+            self.listener.stop()
+            self.listener = None
         self.connection = None
         self.connection_status_label.setText("FPLC not connected")
         self.connection_status_label.setStyleSheet("background-color: red; color: white; border: 1px solid black;")

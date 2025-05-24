@@ -2,7 +2,7 @@
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QPalette, QColor
 import sys
-from gui import DataAcquisitionApp
+from gui import FPLCSystemApp
 
 def set_dark_theme(app):
     dark_palette = QPalette()
@@ -22,7 +22,7 @@ def set_dark_theme(app):
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     set_dark_theme(app)
-    window = DataAcquisitionApp()
+    window = FPLCSystemApp()
     window.setWindowTitle("RPI5_LC_controller")
     window.show()
     sys.exit(app.exec())
