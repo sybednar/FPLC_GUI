@@ -10,7 +10,7 @@
 # Function to display usage
 usage() {
     echo "Usage: $0 -m <commit-message> -v <version-tag>"
-    echo "Example: $0 -m \"Refactored modules and added listener.py\" -v v0.1"
+    echo "Example: $0 -m \"Refactored gui module and added system valce control signalling\" -v v0.1"
     exit 1
 }
 

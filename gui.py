@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QGridLayout, QDialog, QDialogButtonBox
 )
 from PySide6.QtCore import Signal, QObject, Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem
 import pyqtgraph as pg
 import socket
 from network import FPLCServer
@@ -367,6 +367,40 @@ class ColumnTypeDialog(QDialog):
             "His Trap",
             "Other"
         ])
+        layout.addWidget(self.combo_box)
+
+        self.confirm_button = QPushButton("Confirm")
+        self.confirm_button.clicked.connect(self.accept)  # Close dialog on confirm
+        layout.addWidget(self.confirm_button)
+
+        self.setLayout(layout)
+
+class SystemValveDialog(QDialog):   
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        font = self.font()
+        font.setPointSize(16)  # Increase font size
+        self.setFont(font)
+        self.setWindowTitle("System Valve Position")
+        self.setMinimumWidth(300)
+
+        layout = QVBoxLayout()
+
+        self.combo_box = QComboBox()
+
+        # Create a model to center-align items
+        model = QStandardItemModel()
+        for text in ["LOAD", "INJECT", "WASH"]:
+            item = QStandardItem(text)
+            item.setTextAlignment(Qt.AlignCenter)
+            model.appendRow(item)
+        self.combo_box.setModel(model)
+
+        # Center the current text in the combo box
+        self.combo_box.setEditable(True)
+        self.combo_box.lineEdit().setAlignment(Qt.AlignCenter)
+        self.combo_box.setEditable(False)
+
         layout.addWidget(self.combo_box)
 
         self.confirm_button = QPushButton("Confirm")
@@ -739,7 +773,7 @@ class FPLCSystemApp(QMainWindow):
         self.run_pumpA = False
         self.pumpB_button = None
         self.pump_listener = None
-        
+        self.system_valve_position = "LOAD"
 
         # Data storage
         self.elapsed_time_data = []
@@ -871,8 +905,9 @@ class FPLCSystemApp(QMainWindow):
         self.divert_valve_button.setGeometry(542, 400, 100, 30)
         #self.divert_valve_button.clicked.connect(self.toggle_divert_valve)
                
-        self.injection_valve_button = QPushButton("Injection_Valve", container)
-        self.injection_valve_button.setGeometry(652, 400, 100, 30)
+        self.system_valve_button = QPushButton("System_Valve", container)
+        self.system_valve_button.setGeometry(652, 400, 100, 30)
+        self.system_valve_button.clicked.connect(self.open_system_valve_dialog)
 
         # Additional labels
         settings_label = QLabel("Settings", container)
@@ -1105,6 +1140,20 @@ class FPLCSystemApp(QMainWindow):
                         self.handle_disconnection()
             else:
                 self.flowrate = self.last_flowrate
+
+    def open_system_valve_dialog(self):
+        dialog = SystemValveDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.system_valve_position = dialog.combo_box.currentText()
+            #print(f"System_Valve_Position: {self.system_valve_position}")
+        if self.connection:
+            try:
+                self.connection.sendall(f'System_Valve_Position:{self.system_valve_position}'.encode('utf-8'))
+                print(f"Sent System_Valve_Position:{self.system_valve_position} to client")
+            except socket.error as e:
+                print(f"Error sending System_Valve_Position: {e}")
+                self.handle_disconnection()
+
 
     def start_acquisition(self):
         if self.run_time <= 0.0:
