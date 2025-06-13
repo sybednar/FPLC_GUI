@@ -6,8 +6,11 @@ import time
 
 class ReceiveClientSignalsAndData(QObject):
     pumpA_wash_completed_signal = Signal()
+    pumpB_wash_completed_signal = Signal()
     fraction_collector_error_signal = Signal(str)
     fraction_collector_error_cleared_signal = Signal(str)
+    pumpA_error_signal = Signal(str)
+    pumpA_error_cleared_signal = Signal(str)
     data_received_signal = Signal(str)
     disconnected_signal = Signal()
     stop_save_signal = Signal()
@@ -41,12 +44,23 @@ class ReceiveClientSignalsAndData(QObject):
 
                 if "PUMP_A_WASH_COMPLETED" in message:
                     self.pumpA_wash_completed_signal.emit()
+                    
+                elif "PUMP_B_WASH_COMPLETED" in message:
+                    self.pumpB_wash_completed_signal.emit()
 
                 elif "Fraction Collector error" in message:
-                    self.fraction_collector_error_signal.emit(message)
+                    self.fraction_collector_error_signal.emit("Frac-200 error has occurred.<br>Clear the error before continuing....")
 
                 elif "Fraction Collector Error has been cleared" in message:
                     self.fraction_collector_error_cleared_signal.emit(message)
+
+                elif "PumpA error" in message:
+                    self.pumpA_error_signal.emit("Pump A error has occurred.<br>Clear the error before continuing....")
+
+
+
+                elif "PumpA Error has been cleared" in message:
+                    self.pumpA_error_cleared_signal.emit(message)
 
                 elif "STOP_SAVE_ACQUISITION" in message:
                     self.stop_save_signal.emit()

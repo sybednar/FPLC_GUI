@@ -1,4 +1,4 @@
-#gui.py (ver0.4) revised to add run_volume
+#gui.py (ver0.4.1) revised to add handling of pumpA and B solvent exchange
 # Imports and setup
 import sys
 import os
@@ -24,6 +24,8 @@ from hardware import set_gpio17, toggle_gpio17
 from plotting import create_plot_widget, update_plot
 from data_logger import DataLogger
 from listener import ReceiveClientSignalsAndData
+from functools import partial
+
 
 
 
@@ -473,9 +475,9 @@ class FractionCollectorErrorDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Fraction Collector Error")
-        self.setMinimumWidth(300)
+        self.setMinimumWidth(400)
         layout = QVBoxLayout()
-        self.label = QLabel("Frac-200 error has occurred. \nClear error before continuing..")
+        self.label = QLabel("Clear Frac-200 error before continuing")
         self.label.setWordWrap(True)
         layout.addWidget(self.label)
         self.exit_button = QPushButton("Exit")
@@ -495,6 +497,32 @@ class FractionCollectorErrorDialog(QDialog):
     def set_error_cleared(self):
         self.error_cleared = True # Update error status
 
+class PumpAErrorDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("PumpA Error")
+        self.setMinimumWidth(400)
+        layout = QVBoxLayout()
+        self.label = QLabel("Clear PumpA error before continuing")
+        self.label.setWordWrap(True)
+        layout.addWidget(self.label)
+        self.exit_button = QPushButton("Exit")
+        self.exit_button.clicked.connect(self.exit_error_dialog)
+        layout.addWidget(self.exit_button)
+        self.setLayout(layout)
+        self.error_cleared = False
+
+    def exit_error_dialog(self):
+        if self.error_cleared:
+            print("Calling accept()")
+            self.accept()# Close the dialog
+            
+        else:
+            QMessageBox.warning(self, "Error", "Please clear the PumpA error before continuing.")
+
+    def set_error_cleared(self):
+        self.error_cleared = True # Update error status
+
 
 class SolventExchangeDialog(QDialog):
     def __init__(self, parent=None):
@@ -505,12 +533,10 @@ class SolventExchangeDialog(QDialog):
         layout = QVBoxLayout()
 
         self.pumpA_button = QPushButton("PumpA (OFF)")
-        #self.pumpA_button.setStyleSheet("background-color: lightgray;")
         self.pumpA_button.clicked.connect(self.toggle_pumpA)
         layout.addWidget(self.pumpA_button)
 
         self.pumpB_button = QPushButton("PumpB (OFF)")
-        #self.pumpB_button.setStyleSheet("background-color: lightgray;")
         self.pumpB_button.clicked.connect(self.toggle_pumpB)
         layout.addWidget(self.pumpB_button)
 
@@ -527,37 +553,44 @@ class SolventExchangeDialog(QDialog):
     def toggle_pumpA(self):
         self.parent().wash_pumpA = not self.parent().wash_pumpA
         if self.parent().wash_pumpA:
-            self.pumpA_button.setText("PumpA_Wash ON")
-            self.pumpA_button.setStyleSheet("background-color: green; color: white;")
+            self.pumpA_button.setText("PumpA_Wash-Press Start")           
         else:
             self.pumpA_button.setText("PumpA_Wash OFF")
-            self.pumpA_button.setStyleSheet("background-color: lightgray;")
 
     def toggle_pumpB(self):
         self.parent().wash_pumpB = not self.parent().wash_pumpB
         if self.parent().wash_pumpB:
-            self.pumpB_button.setText("PumpB_Wash ON")
-            self.pumpB_button.setStyleSheet("background-color: green; color: white;")
+            self.pumpB_button.setText("PumpB_Wash-Press Start")
         else:
             self.pumpB_button.setText("PumpB_Wash OFF")
-            self.pumpB_button.setStyleSheet("background-color: lightgray;")
 
     def start_wash(self):
-        if self.parent().connection:
-            if self.parent().wash_pumpA:
-                print("WASH_A signal sent")
-                self.parent().connection.sendall('WASH_PUMP_A'.encode('utf-8'))
-            if self.parent().wash_pumpB:
-                print("WASH_B signal sent")
-                self.parent().connection.sendall('WASH_PUMP_B'.encode('utf-8'))
+        wash_pumps = []
+        if self.parent().wash_pumpA:
+            wash_pumps.append("A")
+            self.parent().pumpA_wash_started = True
+            if self.parent().pumpA_wash_started:
+                self.pumpA_button.setText("PumpA_Wash-ON")
+                self.pumpA_button.setStyleSheet("background-color: green; color: white;")
+            self.parent().pumpA_wash_done = False
+        if self.parent().wash_pumpB:
+            wash_pumps.append("B")
+            self.parent().pumpB_wash_started = True
+            if self.parent().pumpB_wash_started:
+                self.pumpB_button.setText("PumpB_Wash-ON")
+                self.pumpB_button.setStyleSheet("background-color: green; color: white;")
+            self.parent().pumpB_wash_done = False
+
+        if wash_pumps and self.parent().connection:
+            message = f'WASH_PUMPS_JSON:{json.dumps({"WASH_PUMPS": wash_pumps})}'
+            self.parent().connection.sendall(message.encode('utf-8'))
+            print(f"Sent WASH_PUMPS_JSON message: {message}")
 
     def exit_dialog(self):
         self.parent().wash_pumpA = False
         self.parent().wash_pumpB = False
         self.pumpA_button.setText("PumpA OFF")
-        self.pumpA_button.setStyleSheet("background-color: lightgray;")
         self.pumpB_button.setText("PumpB OFF")
-        self.pumpB_button.setStyleSheet("background-color: lightgray;")
         self.close()
 
 class PumpModeDialog(QDialog):
@@ -697,15 +730,6 @@ class Worker(QObject):
             
     def handle_data_received(self, message):
         # This is called by the centralized listener
-        if "Fraction Collector error" in message:
-            if not self.error_emitted:
-                self.error_signal.emit("Frac-200 error has occurred.\nClear error before continuing..")
-                self.error_emitted = True
-            return
-        elif "Fraction Collector Error has been cleared" in message:
-            self.error_cleared_signal.emit("Fraction Collector Error has been cleared")
-            self.error_emitted = False
-            return            
 
         values = message.split(',')
         if len(values) == 5:
@@ -783,9 +807,12 @@ class FPLCSystemApp(QMainWindow):
         self.gpio17_mode = 'OFF'
         self.manual_mode_enabled = False
         self.program_mode = None # Tracks 'Open', 'Create', or None
-        self.wash_pumpA = False
+        self.wash_pumpA = False #Tracks whether the user enabled PumpA wash in the GUI
         self.wash_pumpB = False
-        
+        self.pumpA_wash_started = False #Tracks if wash command was sent client
+        self.pumpB_wash_started = False
+        self.pumpA_wash_done = False #Tracks if client reported completion of the wash.
+        self.pumpB_wash_done = False
         self.elution_method = "Isocratic"
         self.pumpA_button = None
         self.pumpA_volume = 0
@@ -1096,8 +1123,11 @@ class FPLCSystemApp(QMainWindow):
                 if not hasattr(self, 'listener') or self.listener is None:
                     self.listener = ReceiveClientSignalsAndData(self.connection)
                     self.listener.pumpA_wash_completed_signal.connect(self.handle_pumpA_wash_completed)
+                    self.listener.pumpB_wash_completed_signal.connect(self.handle_pumpB_wash_completed)
                     self.listener.fraction_collector_error_signal.connect(self.handle_fraction_collector_error)
                     self.listener.fraction_collector_error_cleared_signal.connect(self.handle_fraction_collector_error_cleared)
+                    self.listener.pumpA_error_signal.connect(self.handle_PumpA_error)
+                    self.listener.pumpA_error_cleared_signal.connect(self.handle_PumpA_error_cleared)
                     self.listener.disconnected_signal.connect(self.handle_disconnection)
                     self.listener.stop_save_signal.connect(self.stop_save_acquisition)
                     self.listener.pumpA_volume_signal.connect(self.update_pumpA_progress)
@@ -1131,14 +1161,45 @@ class FPLCSystemApp(QMainWindow):
                 self.run_acquisition()
 
     def open_solvent_exchange_dialog(self):
-        self.solvent_exchange_dialog = SolventExchangeDialog(self)
-        self.solvent_exchange_dialog.exec()
+        if not hasattr(self, 'solvent_exchange_dialog') or not self.solvent_exchange_dialog.isVisible():
+            self.solvent_exchange_dialog = SolventExchangeDialog(self)
+            self.solvent_exchange_dialog.setModal(True)
+            self.solvent_exchange_dialog.show() #.show() ensures the dialog is modal and non-blocking
         
     def handle_pumpA_wash_completed(self):
-        if self.pumpA_button:
-            self.pumpA_button.setText("Pump OFF")
+        print("[DEBUG] PumpA wash completed signal received")
+        self.pumpA_wash_done = True
         if hasattr(self, 'solvent_exchange_dialog') and self.solvent_exchange_dialog.isVisible():
-            self.solvent_exchange_dialog.close()
+            self.solvent_exchange_dialog.pumpA_button.setText("PumpA_Wash-Completed")
+            self.solvent_exchange_dialog.pumpA_button.setStyleSheet("")
+        self.check_if_wash_complete()
+
+    def handle_pumpB_wash_completed(self):
+        print("[DEBUG] PumpB wash completed signal received")
+        self.pumpB_wash_done = True
+        if hasattr(self, 'solvent_exchange_dialog') and self.solvent_exchange_dialog.isVisible():
+            self.solvent_exchange_dialog.pumpB_button.setText("PumpB_Wash-Completed")      
+            self.solvent_exchange_dialog.pumpB_button.setStyleSheet("")
+        self.check_if_wash_complete()
+
+    def check_if_wash_complete(self):
+        print(f"[DEBUG] pumpA_wash_started: {self.pumpA_wash_started}, pumpA_wash_done: {self.pumpA_wash_done}")
+        print(f"[DEBUG] pumpB_wash_started: {self.pumpB_wash_started}, pumpB_wash_done: {self.pumpB_wash_done}")
+
+        if ((self.pumpA_wash_started and self.pumpA_wash_done) and
+            (self.pumpB_wash_started and self.pumpB_wash_done)) or \
+            (self.pumpA_wash_started and not self.pumpB_wash_started and self.pumpA_wash_done) or \
+            (self.pumpB_wash_started and not self.pumpA_wash_started and self.pumpB_wash_done):
+            print("[DEBUG] All required washes completed. Closing dialog.")
+            if hasattr(self, 'solvent_exchange_dialog') and self.solvent_exchange_dialog.isVisible():
+                self.solvent_exchange_dialog.close()
+            self.reset_wash_flags()
+
+    def reset_wash_flags(self):
+        self.pumpA_wash_started = False
+        self.pumpB_wash_started = False
+        self.pumpA_wash_done = False
+        self.pumpB_wash_done = False
         
     def open_pump_mode_dialog(self):
         dialog = PumpModeDialog(self)
@@ -1433,10 +1494,27 @@ class FPLCSystemApp(QMainWindow):
         self.error_dialog.finished.connect(self.reset_error_dialog_flag)
         self.error_dialog.exec()
         
+    def handle_PumpA_error(self, error_message):
+        if self.error_dialog_open:
+            return        
+        print(f"Handling error: {error_message}")
+        self.error_dialog_open = True
+        self.error_dialog = PumpAErrorDialog(self)
+        self.error_dialog.label.setText(error_message)
+        self.error_dialog.finished.connect(self.reset_error_dialog_flag)
+        self.error_dialog.exec()
+        
     def reset_error_dialog_flag(self):
         self.error_dialog_open = False
 
     def handle_fraction_collector_error_cleared(self, message):
+        print(f"Handling error cleared: {message}")
+        if hasattr(self, 'error_dialog'):
+            print(f"Dialog visible: {self.error_dialog.isVisible()}")
+            self.error_dialog.set_error_cleared()
+            self.error_dialog.exit_error_dialog()
+            
+    def handle_PumpA_error_cleared(self, message):
         print(f"Handling error cleared: {message}")
         if hasattr(self, 'error_dialog'):
             print(f"Dialog visible: {self.error_dialog.isVisible()}")
