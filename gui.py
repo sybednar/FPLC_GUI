@@ -1,4 +1,4 @@
-#gui.py (ver0.4.1) revised to add handling of pumpA and B solvent exchange
+#gui.py (ver0.4.2) added gradient method signaling and handling
 # Imports and setup
 import sys
 import os
@@ -497,32 +497,29 @@ class FractionCollectorErrorDialog(QDialog):
     def set_error_cleared(self):
         self.error_cleared = True # Update error status
 
-class PumpAErrorDialog(QDialog):
+class PumpErrorDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("PumpA Error")
+        self.setWindowTitle("Pump Error")
         self.setMinimumWidth(400)
-        layout = QVBoxLayout()
-        self.label = QLabel("Clear PumpA error before continuing")
-        self.label.setWordWrap(True)
-        layout.addWidget(self.label)
+        self.layout = QVBoxLayout()
+        self.label = QLabel()
+        self.layout.addWidget(self.label)
         self.exit_button = QPushButton("Exit")
         self.exit_button.clicked.connect(self.exit_error_dialog)
-        layout.addWidget(self.exit_button)
-        self.setLayout(layout)
-        self.error_cleared = False
+        self.layout.addWidget(self.exit_button)
+        self.setLayout(self.layout)
+
+    def update_error_list(self, pump_errors):
+        error_texts = []
+        if pump_errors["A"]:
+            error_texts.append("PumpA error detected.")
+        if pump_errors["B"]:
+            error_texts.append("PumpB error detected.")
+        self.label.setText("\n".join(error_texts))
 
     def exit_error_dialog(self):
-        if self.error_cleared:
-            print("Calling accept()")
-            self.accept()# Close the dialog
-            
-        else:
-            QMessageBox.warning(self, "Error", "Please clear the PumpA error before continuing.")
-
-    def set_error_cleared(self):
-        self.error_cleared = True # Update error status
-
+        QMessageBox.warning(self, "Error", "Please clear all pump errors before continuing.")
 
 class SolventExchangeDialog(QDialog):
     def __init__(self, parent=None):
@@ -616,38 +613,26 @@ class PumpModeDialog(QDialog):
 class gradient_settings_Dialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("PumpA/B gradient settings")
-        self.setMinimumWidth(200)  # Adjust the width as needed
+        self.setWindowTitle("PumpB Gradient Settings")
+        self.setMinimumWidth(300)
 
-        # Create the main vertical layout
         main_layout = QVBoxLayout()
 
-        # Create a horizontal layout for the spin box and label
-        h_layout = QHBoxLayout()
-
-        # Create a double spin box for % min
-        self.pumpA_min_spinbox = QDoubleSpinBox()
-        self.pumpA_min_spinbox.setRange(0, 100)  # 0 to 99 ml
-        self.pumpA_min_spinbox.setSingleStep(1)  # Increment by 1.0
-        self.pumpA_min_spinbox.setDecimals(1)  # Display one decimal place
-        self.pumpA_min_spinbox.setMinimumWidth(75)
-        self.pumpA_min_spinbox.setMinimumHeight(100)
-
-        # Apply custom styles to increase contrast of up/down arrows
+        # Shared style for both spin boxes
         style = """
         QDoubleSpinBox {
-            background-color: #2c2c2c;  /* Dark background for the spin box */
-            color: #ffffff;  /* White text */
-            border: 1px solid #444444;  /* Border color */
-            font-size: 36px;  /* Increase font size */
+            background-color: #2c2c2c;
+            color: #ffffff;
+            border: 1px solid #444444;
+            font-size: 36px;
         }
         QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
-            background-color: #444444;  /* Dark background for buttons */
-            border: none;  /* Remove border */
-            width: 40px;  /* Increase button width */
-            height: 40px;  /* Increase button height */
-            background-position: center;  /* Center the images */
-            background-repeat: no-repeat;  /* Do not repeat the images */
+            background-color: #444444;
+            border: none;
+            width: 40px;
+            height: 40px;
+            background-position: center;
+            background-repeat: no-repeat;
         }
         QDoubleSpinBox::up-button {
             background-image: url(/home/sybednar/FPLC_controller_venv/FPLC_server/FPLC_GUI_customization/uparrow_3pt_white.png);
@@ -655,49 +640,78 @@ class gradient_settings_Dialog(QDialog):
         QDoubleSpinBox::down-button {
             background-image: url(/home/sybednar/FPLC_controller_venv/FPLC_server/FPLC_GUI_customization/downarrow_3pt_white.png);
         }
-        QDoubleSpinBox::up-button:hover, QSpinBox::down-button:hover {
-            background-color: #555555;  /* Lighter background on hover */
+        QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {
+            background-color: #555555;
         }
         """
-        self.pumpA_min_spinbox.setStyleSheet(style)
         font = self.font()
-        font.setPointSize(24)  # Increase font size
+        font.setPointSize(24)
         self.setFont(font)
 
-        # Add the spin box and label to the horizontal layout
-        h_layout.addWidget(self.pumpA_min_spinbox)
-        h_layout.addWidget(QLabel("PumpA (%)"), alignment=Qt.AlignmentFlag.AlignCenter)
+        # PumpB Min SpinBox
+        pumpB_min_layout = QVBoxLayout()
+        pumpB_min_label = QLabel("Min (%)")
+        pumpB_min_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.pumpB_min_spinbox = QDoubleSpinBox()
+        self.pumpB_min_spinbox.setRange(0, 100)
+        self.pumpB_min_spinbox.setSingleStep(1)
+        self.pumpB_min_spinbox.setDecimals(1)
+        self.pumpB_min_spinbox.setMinimumWidth(75)
+        self.pumpB_min_spinbox.setMinimumHeight(100)
+        self.pumpB_min_spinbox.setStyleSheet(style)
+        pumpB_min_layout.addWidget(pumpB_min_label)
+        pumpB_min_layout.addWidget(self.pumpB_min_spinbox)
 
-        # Add the horizontal layout to the main vertical layout
-        main_layout.addLayout(h_layout)
+        # PumpB Max SpinBox
+        pumpB_max_layout = QVBoxLayout()
+        pumpB_max_label = QLabel("Max (%)")
+        pumpB_max_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.pumpB_max_spinbox = QDoubleSpinBox()
+        self.pumpB_max_spinbox.setRange(0, 100)
+        self.pumpB_max_spinbox.setSingleStep(1)
+        self.pumpB_max_spinbox.setDecimals(1)
+        self.pumpB_max_spinbox.setMinimumWidth(75)
+        self.pumpB_max_spinbox.setMinimumHeight(100)
+        self.pumpB_max_spinbox.setStyleSheet(style)
+        pumpB_max_layout.addWidget(pumpB_max_label)
+        pumpB_max_layout.addWidget(self.pumpB_max_spinbox)
+        
+        # Combine into horizontal layout
+        spinbox_row = QHBoxLayout()
+        spinbox_row.addLayout(pumpB_min_layout)
+        spinbox_row.addLayout(pumpB_max_layout)
 
-        font = self.font()
+        main_layout.addLayout(spinbox_row)
+
+        # Confirm Button
         font.setPointSize(16)
         self.setFont(font)
-
         self.confirm_button = QPushButton("Confirm")
         self.confirm_button.clicked.connect(self.accept)
         main_layout.addWidget(self.confirm_button, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self.setLayout(main_layout)
-        self.load_saved_values()  # Load previously saved values
-        
+        self.load_saved_values()
+
     def load_saved_values(self):
-        # Load saved values from the parent (assuming you save them there)
-        if hasattr(self.parent(), 'saved_pumpA_min'):
-            pumpA_min = self.parent().saved_pumpA_setting
-            self.pumpA_min_spinbox.setValue(pumpA_min)
+        if hasattr(self.parent(), 'saved_pumpB_min'):
+            self.pumpB_min_spinbox.setValue(self.parent().saved_pumpB_min)
+        if hasattr(self.parent(), 'saved_pumpB_max'):
+            self.pumpB_max_spinbox.setValue(self.parent().saved_pumpB_max)
 
     def accept(self):
-        # Save the values upon acceptance
-        self.parent().saved_pumpA_setting = self.pumpA_min_spinbox.value()
+        self.parent().saved_pumpB_min = self.pumpB_min_spinbox.value()
+        self.parent().saved_pumpB_max = self.pumpB_max_spinbox.value()
         super().accept()
 
-    def get_pumpA_setting(self):
-        return self.pumpA_min_spinbox.value()
+    def get_pumpB_min(self):
+        return self.pumpB_min_spinbox.value()
+
+    def get_pumpB_max(self):
+        return self.pumpB_max_spinbox.value()
     
 
-# Worker class for background data acquisition
+#---------- Worker class for background data acquisition----------
 class Worker(QObject):
     data_signal = Signal(float, float, float, float, float)
     finished = Signal()
@@ -823,6 +837,11 @@ class FPLCSystemApp(QMainWindow):
         self.pump_listener = None
         self.system_valve_position = "LOAD"
         self.fraction_collector_mode_enabled = False
+        self.saved_pumpB_min = 0.0
+        self.saved_pumpB_max = 100.0
+        self.pump_errors = {"A": False, "B": False}
+
+
 
         # Data storage
         self.elapsed_time_data = []
@@ -1050,13 +1069,78 @@ class FPLCSystemApp(QMainWindow):
             if flowrate_warning_dialog.exec() == QDialog.DialogCode.Accepted:
                 self.open_flowrate_dialog()
             return
-        
+                   
         if self.elution_method == "Isocratic":
             self.pumpA_volume = self.run_volume
-            
-        #add logic for gradient here
-        
-        self.send_manual_run_method_packet()
+            self.send_isocratic_run_method_packet()
+        elif self.elution_method == "Gradient":
+            self.pumpB_volume = self.run_volume #temporary remove after testing pumpB function 
+            self.send_gradient_run_method_packet()
+
+    def send_manual_run_method_packet(self):
+        if self.connection:
+            run_method_packet = {
+                "System_Valve_Position": self.system_valve_position,
+                "FLOWRATE": self.flowrate,
+                "PumpA_Volume": self.pumpA_volume,
+                "START_PUMPS": True
+            }
+
+            if self.fraction_collector_mode_enabled:
+                run_method_packet["START_ADC"] = True
+
+            try:
+                self.connection.sendall(f'RUN_METHOD_JSON:{json.dumps(run_method_packet)}'.encode('utf-8'))
+                print(f"Sent RUN_METHOD_JSON: {run_method_packet}")
+            except socket.error as e:
+                print(f"Error sending RUN_METHOD_JSON: {e}")
+                self.handle_disconnection()
+                return
+
+            if self.fraction_collector_mode_enabled:
+                self.run_acquisition()
+                
+    def send_isocratic_run_method_packet(self):
+        run_method_packet = {
+            "System_Valve_Position": self.system_valve_position,
+            "FLOWRATE": self.flowrate,
+            "PumpA_Volume": self.pumpA_volume,
+            "START_PUMPS": True
+        }
+        if self.fraction_collector_mode_enabled:
+            run_method_packet["START_ADC"] = True
+        try:
+            self.connection.sendall(f'ISOCRATIC_RUN_METHOD_JSON:{json.dumps(run_method_packet)}'.encode('utf-8'))
+            print(f"Sent ISOCRATIC_RUN_METHOD_JSON: {run_method_packet}")
+        except socket.error as e:
+            print(f"Error sending ISOCRATIC_RUN_METHOD_JSON: {e}")
+            self.handle_disconnection()
+            return
+
+        if self.fraction_collector_mode_enabled:
+            self.run_acquisition()
+
+    def send_gradient_run_method_packet(self):
+        run_method_packet = {
+            "System_Valve_Position": self.system_valve_position,
+            "FLOWRATE": self.flowrate,
+            "PumpB_Volume": self.pumpB_volume,
+            #"Gradient_Volume": self.pumpA_volume,
+            "START_PUMPS": True,
+            #"Gradient_Profile": self.gradient_profile if hasattr(self, 'gradient_profile') else []
+        }
+        if self.fraction_collector_mode_enabled:
+            run_method_packet["START_ADC"] = True
+        try:
+            self.connection.sendall(f'GRADIENT_RUN_METHOD_JSON:{json.dumps(run_method_packet)}'.encode('utf-8'))
+            print(f"Sent GRADIENT_RUN_METHOD_JSON: {run_method_packet}")
+        except socket.error as e:
+            print(f"Error sending GRADIENT_RUN_METHOD_JSON: {e}")
+            self.handle_disconnection()
+            return
+
+        if self.fraction_collector_mode_enabled:
+            self.run_acquisition()
 
     def handle_method_pause(self):
         print("Method Pause clicked")
@@ -1128,6 +1212,8 @@ class FPLCSystemApp(QMainWindow):
                     self.listener.fraction_collector_error_cleared_signal.connect(self.handle_fraction_collector_error_cleared)
                     self.listener.pumpA_error_signal.connect(self.handle_PumpA_error)
                     self.listener.pumpA_error_cleared_signal.connect(self.handle_PumpA_error_cleared)
+                    self.listener.pumpB_error_signal.connect(self.handle_PumpB_error)
+                    self.listener.pumpB_error_cleared_signal.connect(self.handle_PumpB_error_cleared)               
                     self.listener.disconnected_signal.connect(self.handle_disconnection)
                     self.listener.stop_save_signal.connect(self.stop_save_acquisition)
                     self.listener.pumpA_volume_signal.connect(self.update_pumpA_progress)
@@ -1136,29 +1222,6 @@ class FPLCSystemApp(QMainWindow):
 
                     self.listener.start()
             time.sleep(5)
-
-    def send_manual_run_method_packet(self):
-        if self.connection:
-            run_method_packet = {
-                "System_Valve_Position": self.system_valve_position,
-                "FLOWRATE": self.flowrate,
-                "PumpA_Volume": self.pumpA_volume,
-                "START_PUMPS": True
-            }
-
-            if self.fraction_collector_mode_enabled:
-                run_method_packet["START_ADC"] = True
-
-            try:
-                self.connection.sendall(f'RUN_METHOD_JSON:{json.dumps(run_method_packet)}'.encode('utf-8'))
-                print(f"Sent RUN_METHOD_JSON: {run_method_packet}")
-            except socket.error as e:
-                print(f"Error sending RUN_METHOD_JSON: {e}")
-                self.handle_disconnection()
-                return
-
-            if self.fraction_collector_mode_enabled:
-                self.run_acquisition()
 
     def open_solvent_exchange_dialog(self):
         if not hasattr(self, 'solvent_exchange_dialog') or not self.solvent_exchange_dialog.isVisible():
@@ -1207,7 +1270,14 @@ class FPLCSystemApp(QMainWindow):
             selected_mode = dialog.get_selected_mode()
             self.elution_method = selected_mode
             self.pump_mode_button.setText(f"Pump Mode: {selected_mode}")
-            self.pumpB_button.setEnabled(selected_mode == "Gradient")
+
+        # Open gradient settings dialog if Gradient is selected
+        if selected_mode == "Gradient":
+            gradient_dialog = gradient_settings_Dialog(self)
+        if gradient_dialog.exec() == QDialog.DialogCode.Accepted:
+            pumpB_min_setting = gradient_dialog.get_pumpB_min()
+            pumpB_max_setting = gradient_dialog.get_pumpB_max()
+            print(f"Gradient PumpB setting: Min = {pumpB_min_setting}%, Max = {pumpB_max_setting}%")
 
     '''
     def open_pumpA_dialog(self):
@@ -1495,17 +1565,34 @@ class FPLCSystemApp(QMainWindow):
         self.error_dialog.exec()
         
     def handle_PumpA_error(self, error_message):
-        if self.error_dialog_open:
-            return        
-        print(f"Handling error: {error_message}")
-        self.error_dialog_open = True
-        self.error_dialog = PumpAErrorDialog(self)
-        self.error_dialog.label.setText(error_message)
-        self.error_dialog.finished.connect(self.reset_error_dialog_flag)
-        self.error_dialog.exec()
+        self.pump_errors["A"] = True
+        self.show_pump_error_dialog()
+
+    def handle_PumpB_error(self, error_message):
+        self.pump_errors["B"] = True
+        self.show_pump_error_dialog()
+
+    def handle_PumpA_error_cleared(self, message):
+        self.pump_errors["A"] = False
+        self.update_or_close_pump_error_dialog()
+
+    def handle_PumpB_error_cleared(self, message):
+        self.pump_errors["B"] = False
+        self.update_or_close_pump_error_dialog()
         
-    def reset_error_dialog_flag(self):
-        self.error_dialog_open = False
+    def show_pump_error_dialog(self):
+        if not hasattr(self, 'pump_error_dialog') or not self.pump_error_dialog.isVisible():
+            self.pump_error_dialog = PumpErrorDialog(self)
+            self.pump_error_dialog.update_error_list(self.pump_errors)
+            self.pump_error_dialog.show()
+        else:
+            self.pump_error_dialog.update_error_list(self.pump_errors)
+
+    def update_or_close_pump_error_dialog(self):
+        if any(self.pump_errors.values()):
+            self.pump_error_dialog.update_error_list(self.pump_errors)
+        else:
+            self.pump_error_dialog.accept()        
 
     def handle_fraction_collector_error_cleared(self, message):
         print(f"Handling error cleared: {message}")
@@ -1513,14 +1600,7 @@ class FPLCSystemApp(QMainWindow):
             print(f"Dialog visible: {self.error_dialog.isVisible()}")
             self.error_dialog.set_error_cleared()
             self.error_dialog.exit_error_dialog()
-            
-    def handle_PumpA_error_cleared(self, message):
-        print(f"Handling error cleared: {message}")
-        if hasattr(self, 'error_dialog'):
-            print(f"Dialog visible: {self.error_dialog.isVisible()}")
-            self.error_dialog.set_error_cleared()
-            self.error_dialog.exit_error_dialog()
-            
+                        
     def handle_disconnection(self):
         print("Client disconnected. Attempting to reconnect...")
         if self.listener:

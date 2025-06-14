@@ -11,6 +11,8 @@ class ReceiveClientSignalsAndData(QObject):
     fraction_collector_error_cleared_signal = Signal(str)
     pumpA_error_signal = Signal(str)
     pumpA_error_cleared_signal = Signal(str)
+    pumpB_error_signal = Signal(str)
+    pumpB_error_cleared_signal = Signal(str)
     data_received_signal = Signal(str)
     disconnected_signal = Signal()
     stop_save_signal = Signal()
@@ -57,10 +59,14 @@ class ReceiveClientSignalsAndData(QObject):
                 elif "PumpA error" in message:
                     self.pumpA_error_signal.emit("Pump A error has occurred.<br>Clear the error before continuing....")
 
-
-
                 elif "PumpA Error has been cleared" in message:
                     self.pumpA_error_cleared_signal.emit(message)
+                    
+                elif "PumpB error" in message:
+                    self.pumpB_error_signal.emit("Pump B error has occurred.<br>Clear the error before continuing....")
+
+                elif "PumpB Error has been cleared" in message:
+                    self.pumpB_error_cleared_signal.emit(message)    
 
                 elif "STOP_SAVE_ACQUISITION" in message:
                     self.stop_save_signal.emit()
