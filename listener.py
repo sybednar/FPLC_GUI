@@ -17,6 +17,7 @@ class ReceiveClientSignalsAndData(QObject):
     disconnected_signal = Signal()
     stop_save_signal = Signal()
     pumpA_volume_signal = Signal(float)
+    gradient_volume_signal = Signal(float)
 
     def __init__(self, connection):
         super().__init__()
@@ -78,7 +79,15 @@ class ReceiveClientSignalsAndData(QObject):
                         print(f"[Listener] PumpA_running {volume} ml")
                     except ValueError:
                         print(f"Invalid PumpA_running message: {message}")
-                
+
+                elif message.startswith("Gradient_running"):
+                    try:
+                        volume = float(message.split()[1])
+                        self.gradient_volume_signal.emit(volume)
+                        print(f"[Listener] Gradient_running {volume} ml")
+                    except ValueError:
+                        print(f"Invalid Gradient_running message: {message}")
+
                 elif "HEARTBEAT" in message:
                     self.last_heartbeat = time.time()
                     print("[Listener] Heartbeat received.")

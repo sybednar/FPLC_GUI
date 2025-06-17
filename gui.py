@@ -1,4 +1,4 @@
-#gui.py (ver0.4.2) added gradient method signaling and handling
+#gui.py (ver0.4.4) added gradient volume delivered and diveter valve handling
 # Imports and setup
 import sys
 import os
@@ -593,6 +593,9 @@ class SolventExchangeDialog(QDialog):
 class PumpModeDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+        font = self.font()
+        font.setPointSize(16)  # Increase font size
+        self.setFont(font)
         self.setWindowTitle("Select Pump Mode")
         self.setMinimumWidth(300)
         layout = QVBoxLayout()
@@ -971,7 +974,7 @@ class FPLCSystemApp(QMainWindow):
         
         self.divert_valve_button = QPushButton("Diverter(OFF)", container)
         self.divert_valve_button.setGeometry(542, 400, 100, 30)
-        #self.divert_valve_button.clicked.connect(self.toggle_divert_valve)
+        self.divert_valve_button.clicked.connect(self.toggle_divert_valve)
                
         self.system_valve_button = QPushButton("System_Valve", container)
         self.system_valve_button.setGeometry(652, 400, 100, 30)
@@ -1007,12 +1010,12 @@ class FPLCSystemApp(QMainWindow):
         #self.pumpB_button.setGeometry(652, 440, 100, 30)
         #self.pumpB_button.clicked.connect(self.open_pumpB_dialog)
 
-        self.pumpA_progress_bar = QProgressBar(self)
-        self.pumpA_progress_bar.setGeometry(848, 400, 150, 30)
-        self.pumpA_progress_bar.setRange(0, 100)
-        self.pumpA_progress_bar.setValue(0)
-        self.pumpA_progress_bar.setFormat("PumpA: %p%")
-        self.pumpA_progress_bar.setStyleSheet("QProgressBar { color: white; }")
+        self.volume_delivered_progress_bar = QProgressBar(self)
+        self.volume_delivered_progress_bar.setGeometry(848, 400, 150, 30)
+        self.volume_delivered_progress_bar.setRange(0, 100)
+        self.volume_delivered_progress_bar.setValue(0)
+        self.volume_delivered_progress_bar.setFormat("Idle")
+        self.volume_delivered_progress_bar.setStyleSheet("QProgressBar { color: white; }")
 
     def handle_manual_mode(self):
         self.manual_mode_enabled = not self.manual_mode_enabled
@@ -1074,7 +1077,6 @@ class FPLCSystemApp(QMainWindow):
             self.pumpA_volume = self.run_volume
             self.send_isocratic_run_method_packet()
         elif self.elution_method == "Gradient":
-            self.pumpB_volume = self.run_volume #temporary remove after testing pumpB function 
             self.send_gradient_run_method_packet()
 
     def send_manual_run_method_packet(self):
@@ -1124,13 +1126,15 @@ class FPLCSystemApp(QMainWindow):
         run_method_packet = {
             "System_Valve_Position": self.system_valve_position,
             "FLOWRATE": self.flowrate,
-            "PumpB_Volume": self.pumpB_volume,
-            #"Gradient_Volume": self.pumpA_volume,
-            "START_PUMPS": True,
-            #"Gradient_Profile": self.gradient_profile if hasattr(self, 'gradient_profile') else []
+            "GRADIENT_VOLUME": self.run_volume,
+            "PumpB_min_percent": self.saved_pumpB_min,
+            "PumpB_max_percent": self.saved_pumpB_max,
+            "START_PUMPS": True
         }
+
         if self.fraction_collector_mode_enabled:
             run_method_packet["START_ADC"] = True
+
         try:
             self.connection.sendall(f'GRADIENT_RUN_METHOD_JSON:{json.dumps(run_method_packet)}'.encode('utf-8'))
             print(f"Sent GRADIENT_RUN_METHOD_JSON: {run_method_packet}")
@@ -1190,6 +1194,17 @@ class FPLCSystemApp(QMainWindow):
         if self.connection:
             self.connection.sendall('TOGGLE_LED'.encode('utf-8'))
 
+    def toggle_divert_valve(self):
+        if self.connection:
+            if self.gpio17_mode == 'OFF':
+                self.connection.sendall("DIVERTER_VALVE_ON".encode('utf-8'))
+                self.divert_valve_button.setText("Diverter(ON)")
+                self.gpio17_mode = 'ON'
+            else:
+                self.connection.sendall("DIVERTER_VALVE_OFF".encode('utf-8'))
+                self.divert_valve_button.setText("Diverter(OFF)")
+                self.gpio17_mode = 'OFF'
+
     def start_connection_monitor(self):
         self.connection_thread = threading.Thread(target=self.monitor_connection, daemon=True)
         self.connection_thread.start()
@@ -1216,7 +1231,8 @@ class FPLCSystemApp(QMainWindow):
                     self.listener.pumpB_error_cleared_signal.connect(self.handle_PumpB_error_cleared)               
                     self.listener.disconnected_signal.connect(self.handle_disconnection)
                     self.listener.stop_save_signal.connect(self.stop_save_acquisition)
-                    self.listener.pumpA_volume_signal.connect(self.update_pumpA_progress)
+                    self.listener.pumpA_volume_signal.connect(self.update_volume_delivered_progress)
+                    self.listener.gradient_volume_signal.connect(self.update_volume_delivered_progress)                    
                     if self.worker:
                         self.listener.data_received_signal.connect(self.worker.handle_data_received)
 
@@ -1274,70 +1290,26 @@ class FPLCSystemApp(QMainWindow):
         # Open gradient settings dialog if Gradient is selected
         if selected_mode == "Gradient":
             gradient_dialog = gradient_settings_Dialog(self)
-        if gradient_dialog.exec() == QDialog.DialogCode.Accepted:
-            pumpB_min_setting = gradient_dialog.get_pumpB_min()
-            pumpB_max_setting = gradient_dialog.get_pumpB_max()
-            print(f"Gradient PumpB setting: Min = {pumpB_min_setting}%, Max = {pumpB_max_setting}%")
-
-    '''
-    def open_pumpA_dialog(self):
-        if self.elution_method == "Isocratic":
-            dialog = pumpA_settings_Dialog(self)                   
-            if dialog.exec() == QDialog.DialogCode.Accepted:   
-                new_pumpA_volume = dialog.get_pumpA_volume()  # Get the new volume from the dialog  
-                if new_pumpA_volume > 0:  # Check if the new pumpA_volume is valid  
-                    self.pumpA_volume = new_pumpA_volume  # Update the pumpA_volume  
-                    self.last_pumpA_volume = new_pumpA_volume  # Save the last valid pumpA_volume                      
-                    print(f"PumpA_Volume:{self.pumpA_volume} ml")
-                    
-                else: 
-                    # If the new pumpA_volume is invalid, keep the last valid pumpA_volume 
-                    self.pumpA_volume = self.last_pumpA_volume
-    '''
+            if gradient_dialog.exec() == QDialog.DialogCode.Accepted:
+                self.saved_pumpB_min = gradient_dialog.get_pumpB_min()
+                self.saved_pumpB_max = gradient_dialog.get_pumpB_max()
+                print(f"Gradient PumpB setting: Min = {self.saved_pumpB_min}%, Max = {self.saved_pumpB_max}%")
             
-    def update_pumpA_progress(self, volume_delivered: float):
-        print(f"Type of volume_delivered: {type(volume_delivered)}")
-        if self.pumpA_volume > 0:
-            percent = min(100, int((volume_delivered / self.pumpA_volume) * 100))
-            self.pumpA_progress_bar.setValue(percent)
-            self.pumpA_progress_bar.setFormat(f"PumpA: {volume_delivered:.2f} ml ({percent}%)")
+    def update_volume_delivered_progress(self, volume_delivered: float):
+        if self.run_volume > 0:
+            percent = max(0, min(100, int((volume_delivered / self.run_volume) * 100)))
+            label = "PumpA" if self.elution_method == "Isocratic" else "Gradient"
+            self.volume_delivered_progress_bar.setValue(percent)
+            self.volume_delivered_progress_bar.setFormat(f"{label}: {volume_delivered:.2f} ml ({percent}%)")
         else:
-            self.pumpA_progress_bar.setValue(0)
-            self.pumpA_progress_bar.setFormat("PumpA: Idle")
+            self.volume_delivered_progress_bar.setValue(0)
+            self.volume_delivered_progress_bar.setFormat("Idle")
 
     def open_pumpB_dialog(self):
         if self.elution_method == "Isocratic":
             self.pumpB_button.setEnabled(False)
         else:
             print("PumpB Button clicked") #placeholder for additional logic
-    '''
-    def Standby_Run_pumps(self):
-        if self.pumpA_volume <= 0.0:
-            set_pumpA_volume_warning_dialog = SetPumpAVolume_WarningDialog(self)
-            if set_pumpA_volume_warning_dialog.exec() == QDialog.DialogCode.Accepted:
-                self.open_pumpA_dialog()
-            return
-
-        if self.flowrate <= 0.0:
-            flowrate_warning_dialog = FlowRate_WarningDialog(self)
-            if flowrate_warning_dialog.exec() == QDialog.DialogCode.Accepted:
-                self.open_flowrate_dialog()
-            return
-
-        if self.run_pumpA == False:
-            self.run_pumpA = True
-            self.standby_run_pumps_button.setText("Pumps Running")
-            if self.connection is None or self.connection.fileno() == -1:
-                self.connection = self.server.accept_connection()
-            self.connection.sendall('START_PUMPS'.encode('utf-8'))
-
-        else:
-            self.run_pumpA = False
-            self.standby_run_pumps_button.setText("StandBy")
-            if self.connection is None or self.connection.fileno() == -1:
-                self.connection = self.server.accept_connection()
-            self.connection.sendall('STOP_PUMPS'.encode('utf-8'))
-    '''
 
     def open_run_volume_dialog(self):
         dialog = Volume_Dialog(self)
@@ -1494,8 +1466,8 @@ class FPLCSystemApp(QMainWindow):
         print('Plot cleared and system reset. Ready for next acquisition.')
 
     def reset_progress_bar(self):
-        self.pumpA_progress_bar.setValue(0)
-        self.pumpA_progress_bar.setFormat("PumpA: 0.00 ml (0%)")
+        self.volume_delivered_progress_bar.setValue(0)
+        self.volume_delivered_progress_bar.setFormat("Idle")
 
     def clear_data(self):
         self.elapsed_time_data.clear()
