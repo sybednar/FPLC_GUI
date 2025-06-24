@@ -1,4 +1,4 @@
-#gui.py (ver0.4.4) added gradient volume delivered and diveter valve handling
+#gui.py (ver0.4.6) adding method editor
 # Imports and setup
 import sys
 import os
@@ -24,10 +24,7 @@ from hardware import set_gpio17, toggle_gpio17
 from plotting import create_plot_widget, update_plot
 from data_logger import DataLogger
 from listener import ReceiveClientSignalsAndData
-from functools import partial
-
-
-
+from method_editor import MethodEditor
 
 
 
@@ -36,7 +33,7 @@ class OpenProgramModeDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Program Options")
         self.setMinimumWidth(400)
-
+        
         layout = QVBoxLayout()
         font = self.font()
         font.setPointSize(16)
@@ -46,8 +43,8 @@ class OpenProgramModeDialog(QDialog):
 
         self.buttons = QDialogButtonBox()
         self.exit_button = self.buttons.addButton("Exit", QDialogButtonBox.ButtonRole.RejectRole)
-        self.open_button = self.buttons.addButton("Open Program File", QDialogButtonBox.ButtonRole.ActionRole)
-        self.create_button = self.buttons.addButton("Create New Program", QDialogButtonBox.ButtonRole.AcceptRole)
+        self.open_button = self.buttons.addButton("Open Method File", QDialogButtonBox.ButtonRole.ActionRole)
+        self.create_button = self.buttons.addButton("Create New Method", QDialogButtonBox.ButtonRole.AcceptRole)
 
         layout.addWidget(self.buttons)
         self.setLayout(layout)
@@ -795,7 +792,7 @@ class FPLCSystemApp(QMainWindow):
         self.setFixedSize(1024, 768)
         
         self.connection_status_label = QLabel("FPLC not connected", self)
-        self.connection_status_label.setGeometry(848, 320, 150, 30)
+        self.connection_status_label.setGeometry(848, 10, 150, 30)
         self.connection_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.connection_status_label.setStyleSheet("background-color: red; color: white; border: 1px solid black;")
                 
@@ -821,8 +818,7 @@ class FPLCSystemApp(QMainWindow):
         self.max_y_value = self.selected_AUFS_value
         self.selected_uv_monitor = "Pharmacia UV MII"
         self.metadata_written = False
-        self.gpio17_mode = 'OFF'
-        self.manual_mode_enabled = False
+        self.toggle_pump_calibration_mode = 'OFF'
         self.program_mode = None # Tracks 'Open', 'Create', or None
         self.wash_pumpA = False #Tracks whether the user enabled PumpA wash in the GUI
         self.wash_pumpB = False
@@ -839,11 +835,13 @@ class FPLCSystemApp(QMainWindow):
         self.pumpB_button = None
         self.pump_listener = None
         self.system_valve_position = "LOAD"
+        self.divert_valve_mode = False 
         self.fraction_collector_mode_enabled = False
         self.saved_pumpB_min = 0.0
         self.saved_pumpB_max = 100.0
         self.pump_errors = {"A": False, "B": False}
-
+        self.current_step_index = 0
+        self.method_sequence = []
 
 
         # Data storage
@@ -884,267 +882,241 @@ class FPLCSystemApp(QMainWindow):
 
         # Connection status label
         self.connection_status_label = QLabel("FPLC not connected", self)
-        self.connection_status_label.setGeometry(848, 320, 150, 30)
+        self.connection_status_label.setGeometry(848, 10, 150, 30)
         self.connection_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.connection_status_label.setStyleSheet("background-color: red; color: white; border: 1px solid black;")
 
         # Labels
-        left_top_label = QLabel("Method", container)
-        left_top_label.setGeometry(50, 20, 100, 30)
-        left_top_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        #left_top_label = QLabel("Method", container)
+        #left_top_label.setGeometry(50, 520, 100, 30)
+        #left_top_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         left_middle_label = QLabel("Method Operate", container)
-        left_middle_label.setGeometry(50, 160, 100, 30)
+        left_middle_label.setGeometry(50, 60, 100, 30)
         left_middle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         right_label = QLabel("Data Analysis", container)
-        right_label.setGeometry(874, 20, 100, 30)
+        right_label.setGeometry(874, 60, 100, 30)
         right_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # Left-side buttons
-        self.manual_mode_button = QPushButton("Manual (OFF)", container)
-        self.manual_mode_button.setGeometry(50, 60, 100, 30)
-        self.manual_mode_button.clicked.connect(self.handle_manual_mode)
-
-        self.program_mode_button = QPushButton("Program", container)
-        self.program_mode_button.setGeometry(50, 100, 100, 30)
-        self.program_mode_button.clicked.connect(self.handle_program_mode)
-
         self.method_run_button = QPushButton("Run_Method", container)
-        self.method_run_button.setGeometry(50, 200, 100, 30)
+        self.method_run_button.setGeometry(50, 100, 100, 30)
         self.method_run_button.clicked.connect(self.handle_method_run)
 
         self.method_pause_button = QPushButton("Pause_Method", container)
-        self.method_pause_button.setGeometry(50, 240, 100, 30)
+        self.method_pause_button.setGeometry(50, 180, 100, 30)
         self.method_pause_button.clicked.connect(self.handle_method_pause)
 
         self.method_stop_button = QPushButton("Stop_Method", container)
-        self.method_stop_button.setGeometry(50, 280, 100, 30)
+        self.method_stop_button.setGeometry(50, 260, 100, 30)
         self.method_stop_button.clicked.connect(self.handle_method_stop)
+
+        self.program_mode_button = QPushButton("Program_Method", container)
+        self.program_mode_button.setGeometry(50, 460, 100, 30)
+        self.program_mode_button.clicked.connect(self.handle_program_mode)
 
         # Right-side buttons
         self.Peak_ID_button = QPushButton("Peak_ID", container)
-        self.Peak_ID_button.setGeometry(874, 60, 100, 30)
+        self.Peak_ID_button.setGeometry(874, 100, 100, 30)
         self.Peak_ID_button.clicked.connect(self.handle_Peak_ID_button_click)
 
         self.Baseline_Corr_button = QPushButton("Baseline_Corr", container)
-        self.Baseline_Corr_button.setGeometry(874, 100, 100, 30)
+        self.Baseline_Corr_button.setGeometry(874, 140, 100, 30)
         self.Baseline_Corr_button.clicked.connect(self.handle_Baseline_Corr_button_click)
 
         self.Peak_Smoothing_button = QPushButton("Peak_Smoothing", container)
-        self.Peak_Smoothing_button.setGeometry(874, 140, 100, 30)
+        self.Peak_Smoothing_button.setGeometry(874, 180, 100, 30)
         self.Peak_Smoothing_button.clicked.connect(self.handle_Peak_Smoothing_button_click)
 
         self.desktop_button = QPushButton("Desktop", container)
-        self.desktop_button.setGeometry(874, 280, 100, 30)
+        self.desktop_button.setGeometry(874, 260, 100, 30)
         self.desktop_button.clicked.connect(self.close_application)
 
         # Settings and control buttons
-        self.run_volume_button = QPushButton("Set Run Volume", container)
-        self.run_volume_button.setGeometry(212, 360, 100, 30)
-        self.run_volume_button.clicked.connect(self.open_run_volume_dialog)
-
-        self.UVMonitor_button = QPushButton("UVMonitor", container)
-        self.UVMonitor_button.setGeometry(322, 360, 100, 30)
-        self.UVMonitor_button.clicked.connect(self.open_UV_Monitor_dialog)
+        self.system_valve_button = QPushButton("System_Valve", container)
+        self.system_valve_button.setGeometry(212, 360, 100, 30)
+        self.system_valve_button.clicked.connect(self.open_system_valve_dialog)
 
         self.FlowRate_button = QPushButton("FlowRate", container)
-        self.FlowRate_button.setGeometry(432, 360, 100, 30)
+        self.FlowRate_button.setGeometry(322, 360, 100, 30)
         self.FlowRate_button.clicked.connect(self.open_flowrate_dialog)
 
+        self.run_volume_button = QPushButton("Set Run Volume", container)
+        self.run_volume_button.setGeometry(432, 360, 100, 30)
+        self.run_volume_button.clicked.connect(self.open_run_volume_dialog)
+
+        self.pump_mode_button = QPushButton("Pump Mode: Isocratic", container)
+        self.pump_mode_button.setGeometry(542, 360, 210, 30)
+        self.pump_mode_button.clicked.connect(self.open_pump_mode_dialog)
+  
+
+
         self.column_type_button = QPushButton("Column Type", container)
-        self.column_type_button.setGeometry(542, 360, 100, 30)
+        self.column_type_button.setGeometry(212, 400, 100, 30)
         self.column_type_button.clicked.connect(self.open_column_type_dialog)
-
-        self.gpio17_button = QPushButton("GPIO17_OFF", container)
-        self.gpio17_button.setGeometry(652, 360, 100, 30)
-        self.gpio17_button.clicked.connect(self.toggle_gpio17)
-
-        #self.blank_button = QPushButton("Blank", container)
-        #self.blank_button.setGeometry(212, 400, 100, 30)
-        #self.blank_button.clicked.connect(self.start_acquisition)
 
         self.fraction_collector_button = QPushButton("Frac Collect (OFF)", container)
         self.fraction_collector_button.setGeometry(322, 400, 100, 30)
         self.fraction_collector_button.clicked.connect(self.toggle_Fraction_Collector)
 
-        #self.stop_save_button = QPushButton("Stop and Save", container)
-        #self.stop_save_button.setGeometry(432, 400, 100, 30)
-        #self.stop_save_button.clicked.connect(self.stop_save_acquisition)
+        self.UVMonitor_button = QPushButton("UVMonitor", container)
+        self.UVMonitor_button.setGeometry(432, 400, 100, 30)
+        self.UVMonitor_button.clicked.connect(self.open_UV_Monitor_dialog)
         
         self.divert_valve_button = QPushButton("Diverter(OFF)", container)
         self.divert_valve_button.setGeometry(542, 400, 100, 30)
         self.divert_valve_button.clicked.connect(self.toggle_divert_valve)
                
-        self.system_valve_button = QPushButton("System_Valve", container)
-        self.system_valve_button.setGeometry(652, 400, 100, 30)
-        self.system_valve_button.clicked.connect(self.open_system_valve_dialog)
+
 
         # Additional labels
-        settings_label = QLabel("Settings", container)
-        settings_label.setGeometry(136, 360, 100, 30)
-        settings_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        #settings_label = QLabel("Flow", container)
+        #settings_label.setGeometry(136, 360, 100, 30)
+        #settings_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        fraction_collector_label = QLabel("Fraction Collector", container)
-        fraction_collector_label.setGeometry(110, 400, 100, 30)
-        fraction_collector_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        #fraction_collector_label = QLabel("Collection", container)
+        #fraction_collector_label.setGeometry(110, 400, 100, 30)
+        #fraction_collector_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        Pumps_Valves_label = QLabel("Pumps and Valves", container)
-        Pumps_Valves_label.setGeometry(108, 440, 100, 30)
-        Pumps_Valves_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # Pump and valve control buttons
         self.pump_wash_button = QPushButton("Solvent Change", container)
-        self.pump_wash_button.setGeometry(212, 440, 100, 30)
+        self.pump_wash_button.setGeometry(874, 360, 100, 30)
         self.pump_wash_button.clicked.connect(self.open_solvent_exchange_dialog)
 
-        self.pump_mode_button = QPushButton("Pump Mode: Isocratic", container)
-        self.pump_mode_button.setGeometry(432, 440, 210, 30)
-        self.pump_mode_button.clicked.connect(self.open_pump_mode_dialog)
+        self.pump_calibration_button = QPushButton("Pump_Calibration", container)
+        self.pump_calibration_button.setGeometry(874, 400, 100, 30)
+        self.pump_calibration_button.clicked.connect(self.toggle_pump_calibration)
         
-        #self.pumpA_button = QPushButton("Pump_A", container) #Run/Standby
-        #self.pumpA_button.setGeometry(542, 440, 100, 30)
-        #self.pumpA_button.clicked.connect(self.open_pumpA_dialog)
-
-        #self.pumpB_button = QPushButton("Pump_B", container) #Run/Standby
-        #self.pumpB_button.setGeometry(652, 440, 100, 30)
-        #self.pumpB_button.clicked.connect(self.open_pumpB_dialog)
+        Pumps_label = QLabel("Pumps", container)
+        Pumps_label.setGeometry(360, 680, 100, 30)
+        Pumps_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.volume_delivered_progress_bar = QProgressBar(self)
-        self.volume_delivered_progress_bar.setGeometry(848, 400, 150, 30)
+        self.volume_delivered_progress_bar.setGeometry(438, 680, 150, 30)
         self.volume_delivered_progress_bar.setRange(0, 100)
         self.volume_delivered_progress_bar.setValue(0)
         self.volume_delivered_progress_bar.setFormat("Idle")
         self.volume_delivered_progress_bar.setStyleSheet("QProgressBar { color: white; }")
 
-    def handle_manual_mode(self):
-        self.manual_mode_enabled = not self.manual_mode_enabled
-        self.manual_mode_button.setText("Manual (ON)" if self.manual_mode_enabled else "Manual (OFF)")
+        self.method_editor = MethodEditor(container, main_app=self)
+        self.method_editor.setGeometry(70, 480, 870, 180) # Adjust size and position as needed
 
-        if self.manual_mode_enabled:
-            print("Manual mode enabled")
-            self.open_system_valve_dialog()
-        else:
-            print("Manual moded disabled")
-        self.update_manual_controls()
 
     def handle_program_mode(self):
-        self.manual_mode_enabled = False # Disable manual mode when Program dialog is opened
-        self.manual_mode_button.setText("Manual (OFF)")
-        self.update_manual_controls()
-        dialog = OpenProgramModeDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            if dialog.selected_option == "Open":
-                self.program_mode = "Open"
-                print("Open Program File selected")
-                # TODO: Add logic to open program file
-            elif dialog.selected_option == "Create":
-                self.program_mode = "Create"
-                print("Create New Program selected")
-                # TODO: Add logic to create new program
+        if self.method_editor.steps:
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Existing Method Detected")
+            msg_box.setText("A method is already loaded. What would you like to do?")
+            save_btn = msg_box.addButton("Save", QMessageBox.AcceptRole)
+            delete_btn = msg_box.addButton("Delete", QMessageBox.DestructiveRole)
+            cancel_btn = msg_box.addButton("Cancel", QMessageBox.RejectRole)
+            msg_box.exec()
+
+            if msg_box.clickedButton() == save_btn:
+                self.method_editor.save_method()
+                self.method_editor.new_method()
+                self.method_editor.add_step(0, None)
+            elif msg_box.clickedButton() == delete_btn:
+                self.method_editor.new_method()
+                self.method_editor.add_step(0, None)
+            else:
+                return# Cancelled
+
         else:
-            # If user exits the dialog, re-enable manual mode
-            self.manual_mode_enabled = True
-            self.manual_mode_button.setText("Manual (ON)")
-            self.update_manual_controls()
-            print("Program dialog exited_Manual mode re-enabled")
+            dialog = OpenProgramModeDialog(self)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                if dialog.selected_option == "Open":
+                    self.method_editor.load_method()
+                    if not self.method_editor.steps:
+                        self.method_editor.add_step(0, None)
+                elif dialog.selected_option == "Create":
+                    self.method_editor.new_method()
+                    self.method_editor.add_step(0, None)
+
+
 
     def handle_method_run(self):
-        print("Method Run clicked")
-        
-        # Check if connection is active
+        self.method_sequence = self.method_editor.get_method_sequence()
+        self.current_step_index = 0
+        self.run_next_step()
+
+    def run_next_step(self):
         if self.connection is None or self.connection.fileno() == -1:
-            warning_dialog = ConnectionWarningDialog(self)
-            if warning_dialog.exec() != QDialog.DialogCode.Accepted:
-                return
-               
-        # Reset pumpA progress bar
-        self.reset_progress_bar()
+            QMessageBox.critical(self, "Connection Error", "FPLC client is not connected. Please wait for connection.")
+            print("run_next_step aborted: No connection to client.")
+            return
         
-        if self.run_volume <= 0.0:
-            runvolume_warning_dialog = RunVolume_WarningDialog(self)
-            if runtime_warning_dialog.exec() == QDialog.DialogCode.Accepted:
-                self.open_run_volume_dialog()
+        if self.current_step_index >= len(self.method_sequence):
+            print("All steps completed.")
             return
 
-        if self.flowrate <= 0.0:
-            flowrate_warning_dialog = FlowRate_WarningDialog(self)
-            if flowrate_warning_dialog.exec() == QDialog.DialogCode.Accepted:
-                self.open_flowrate_dialog()
-            return
-                   
-        if self.elution_method == "Isocratic":
-            self.pumpA_volume = self.run_volume
-            self.send_isocratic_run_method_packet()
-        elif self.elution_method == "Gradient":
-            self.send_gradient_run_method_packet()
+        step = self.method_sequence[self.current_step_index]
 
-    def send_manual_run_method_packet(self):
-        if self.connection:
-            run_method_packet = {
-                "System_Valve_Position": self.system_valve_position,
-                "FLOWRATE": self.flowrate,
-                "PumpA_Volume": self.pumpA_volume,
-                "START_PUMPS": True
-            }
+        # Update flowrate and run volume
+        self.flowrate = float(step["Flowrate (ml/min)"])
+        self.run_volume = float(step["Run Volume (ml)"])
+        self.last_flowrate = self.flowrate
+        self.last_run_volume = self.run_volume
+        self.saved_flowrate = self.flowrate
+        self.saved_run_volume = self.run_volume
 
-            if self.fraction_collector_mode_enabled:
-                run_method_packet["START_ADC"] = True
+        # Update plot
+        self.plot_widget.setXRange(0, self.run_volume)
+        self.update_plot_title()
 
-            try:
-                self.connection.sendall(f'RUN_METHOD_JSON:{json.dumps(run_method_packet)}'.encode('utf-8'))
-                print(f"Sent RUN_METHOD_JSON: {run_method_packet}")
-            except socket.error as e:
-                print(f"Error sending RUN_METHOD_JSON: {e}")
-                self.handle_disconnection()
-                return
+        # Check Frac Collect status for this step
+        frac_collect = step.get("Frac Collect", "OFF")
+        self.fraction_collector_mode_enabled = frac_collect == "ON"
+        self.fraction_collector_button.setText(f"Frac Collect ({frac_collect})")
 
-            if self.fraction_collector_mode_enabled:
-                self.run_acquisition()
-                
-    def send_isocratic_run_method_packet(self):
-        run_method_packet = {
-            "System_Valve_Position": self.system_valve_position,
+        # Determine pump mode and prepare run packet
+        pump_mode = step.get("Pump Mode", "Isocratic")
+        run_packet = {
+            "System_Valve_Position": step["System Valve"],
             "FLOWRATE": self.flowrate,
-            "PumpA_Volume": self.pumpA_volume,
+            "VOLUME": self.run_volume,
+            "DIVERTER_VALVE": step["Diverter"],
             "START_PUMPS": True
         }
         if self.fraction_collector_mode_enabled:
-            run_method_packet["START_ADC"] = True
+            run_packet["START_ADC"] = True
+
+        if pump_mode == "Gradient":
+            gradient = step.get("PumpB Gradient", {"Min": 0.0, "Max": 100.0})
+            run_packet["PumpB_min_percent"] = gradient.get("Min", 0.0)
+            run_packet["PumpB_max_percent"] = gradient.get("Max", 100.0)
+            message = f'GRADIENT_RUN_METHOD_JSON:{json.dumps(run_packet)}'
+        else:
+            run_packet["PumpB_min_percent"] = 0.0
+            run_packet["PumpB_max_percent"] = 0.0
+            message = f'ISOCRATIC_RUN_METHOD_JSON:{json.dumps(run_packet)}'
+
         try:
-            self.connection.sendall(f'ISOCRATIC_RUN_METHOD_JSON:{json.dumps(run_method_packet)}'.encode('utf-8'))
-            print(f"Sent ISOCRATIC_RUN_METHOD_JSON: {run_method_packet}")
+            self.connection.sendall(message.encode('utf-8'))
+            print(f"Sent step {self.current_step_index + 1}: {message}")
         except socket.error as e:
-            print(f"Error sending ISOCRATIC_RUN_METHOD_JSON: {e}")
+            print(f"Error sending step: {e}")
             self.handle_disconnection()
             return
 
         if self.fraction_collector_mode_enabled:
             self.run_acquisition()
 
-    def send_gradient_run_method_packet(self):
-        run_method_packet = {
-            "System_Valve_Position": self.system_valve_position,
-            "FLOWRATE": self.flowrate,
-            "GRADIENT_VOLUME": self.run_volume,
-            "PumpB_min_percent": self.saved_pumpB_min,
-            "PumpB_max_percent": self.saved_pumpB_max,
-            "START_PUMPS": True
-        }
-
-        if self.fraction_collector_mode_enabled:
-            run_method_packet["START_ADC"] = True
-
-        try:
-            self.connection.sendall(f'GRADIENT_RUN_METHOD_JSON:{json.dumps(run_method_packet)}'.encode('utf-8'))
-            print(f"Sent GRADIENT_RUN_METHOD_JSON: {run_method_packet}")
-        except socket.error as e:
-            print(f"Error sending GRADIENT_RUN_METHOD_JSON: {e}")
-            self.handle_disconnection()
+    def handle_next_step(self):
+        if self.current_step_index >= len(self.method_sequence):
             return
 
-        if self.fraction_collector_mode_enabled:
-            self.run_acquisition()
+        step = self.method_sequence[self.current_step_index]
+        end_action = step.get("End Action", "Continue")
+
+        if end_action == "Continue":
+            self.current_step_index += 1
+            self.run_next_step()
+        elif end_action == "Pause":
+            self.handle_method_pause()
+        elif end_action == "Stop":
+            self.handle_method_stop()
 
     def handle_method_pause(self):
         print("Method Pause clicked")
@@ -1157,17 +1129,30 @@ class FPLCSystemApp(QMainWindow):
                 "STOP_PUMPS": True,
                 "System_Valve_Position": "LOAD",
                 "FLOWRATE": 0.0,
-                "PumpA_Volume": 0.0
+                "PumpA_Volume": 0.0,
+                "PumpB_min_percent": 0.0,
+                "PumpB_max_percent": 0.0
             }
+
             if self.fraction_collector_mode_enabled:
                 stop_method_packet["STOP_ADC"] = True
+                self.fraction_collector_mode_enabled = False
+                self.fraction_collector_button.setText("Frac Collect (OFF)")
+
+            if self.divert_valve_mode:
+                stop_method_packet["DIVERTER_VALVE"] = False
+                self.divert_valve_button.setText("Diverter(OFF)")
+                self.divert_valve_mode = False
+
             try:
                 self.connection.sendall(f'METHOD_STOP_JSON:{json.dumps(stop_method_packet)}'.encode('utf-8'))
                 print(f"Sent METHOD_STOP_JSON: {stop_method_packet}")
             except socket.error as e:
                 print(f"Error sending METHOD_STOP_JSON: {e}")
                 self.handle_disconnection()
-                
+
+            self.reset_progress_bar()
+
             if self.fraction_collector_mode_enabled:
                 self.stop_save_acquisition()
 
@@ -1180,7 +1165,6 @@ class FPLCSystemApp(QMainWindow):
     def handle_Peak_Smoothing_button_click(self):
         print("Peak_Smoothing Button, set Savitzky-Golay window length and polyorder values")
    
-
     def update_manual_controls(self):
         is_connected = self.connection is not None and self.connection.fileno() != -1
         enable_controls = self.manual_mode_enabled and is_connected
@@ -1188,22 +1172,25 @@ class FPLCSystemApp(QMainWindow):
         #self.pause_button.setEnabled(enable_controls)
         #self.stop_save_button.setEnabled(enable_controls)
 
-    def toggle_gpio17(self):
-        self.gpio17_mode = toggle_gpio17(self.gpio17_mode)
-        self.gpio17_button.setText(f"GPIO17-{self.gpio17_mode}")
-        if self.connection:
-            self.connection.sendall('TOGGLE_LED'.encode('utf-8'))
+    def toggle_pump_calibration(self):
+        print("Pump_Calibration Button clicked")
+        #self.toggle_pump_calibration_mode = 'OFF'
 
     def toggle_divert_valve(self):
-        if self.connection:
-            if self.gpio17_mode == 'OFF':
-                self.connection.sendall("DIVERTER_VALVE_ON".encode('utf-8'))
-                self.divert_valve_button.setText("Diverter(ON)")
-                self.gpio17_mode = 'ON'
-            else:
-                self.connection.sendall("DIVERTER_VALVE_OFF".encode('utf-8'))
-                self.divert_valve_button.setText("Diverter(OFF)")
-                self.gpio17_mode = 'OFF'
+        if not self.divert_valve_mode:
+            #self.connection.sendall("DIVERTER_VALVE_ON".encode('utf-8'))
+            self.divert_valve_button.setText("Diverter(ON)")
+            self.divert_valve_mode = True
+            if self.method_editor.steps:
+                self.method_editor.steps[-1]["Diverter"] = self.divert_valve_mode
+                self.method_editor.update_table()
+        else:
+            #self.connection.sendall("DIVERTER_VALVE_OFF".encode('utf-8'))
+            self.divert_valve_button.setText("Diverter(OFF)")
+            self.divert_valve_mode = False
+            if self.method_editor.steps:
+                self.method_editor.steps[-1]["Diverter"] = self.divert_valve_mode
+                self.method_editor.update_table()
 
     def start_connection_monitor(self):
         self.connection_thread = threading.Thread(target=self.monitor_connection, daemon=True)
@@ -1216,7 +1203,7 @@ class FPLCSystemApp(QMainWindow):
                 self.connection = self.server.accept_connection()
                 self.connection_status_label.setText("FPLC connected")
                 self.connection_status_label.setStyleSheet("background-color: green; color: white; border: 1px solid black;")
-                self.update_manual_controls()
+                #self.update_manual_controls()
                 self.connection_established.emit() #Emit signal to notify connection is established
 
                 if not hasattr(self, 'listener') or self.listener is None:
@@ -1232,7 +1219,11 @@ class FPLCSystemApp(QMainWindow):
                     self.listener.disconnected_signal.connect(self.handle_disconnection)
                     self.listener.stop_save_signal.connect(self.stop_save_acquisition)
                     self.listener.pumpA_volume_signal.connect(self.update_volume_delivered_progress)
-                    self.listener.gradient_volume_signal.connect(self.update_volume_delivered_progress)                    
+                    self.listener.pumpA_volume_signal.connect(self.on_pumpA_volume_update)
+                    self.listener.gradient_volume_signal.connect(self.update_volume_delivered_progress)
+                    self.listener.gradient_volume_signal.connect(self.on_gradient_volume_update)
+                    self.listener.valve_error_signal.connect(self.handle_valve_error)
+                    self.listener.valve_position_signal.connect(self.handle_valve_position)
                     if self.worker:
                         self.listener.data_received_signal.connect(self.worker.handle_data_received)
 
@@ -1286,7 +1277,9 @@ class FPLCSystemApp(QMainWindow):
             selected_mode = dialog.get_selected_mode()
             self.elution_method = selected_mode
             self.pump_mode_button.setText(f"Pump Mode: {selected_mode}")
-
+            if self.method_editor.steps:
+                self.method_editor.steps[-1]["Pump Mode"] = selected_mode
+                self.method_editor.update_table()
         # Open gradient settings dialog if Gradient is selected
         if selected_mode == "Gradient":
             gradient_dialog = gradient_settings_Dialog(self)
@@ -1294,22 +1287,33 @@ class FPLCSystemApp(QMainWindow):
                 self.saved_pumpB_min = gradient_dialog.get_pumpB_min()
                 self.saved_pumpB_max = gradient_dialog.get_pumpB_max()
                 print(f"Gradient PumpB setting: Min = {self.saved_pumpB_min}%, Max = {self.saved_pumpB_max}%")
+                if self.method_editor.steps:
+                    self.method_editor.steps[-1]["PumpB Min %"] = self.saved_pumpB_min
+                    self.method_editor.steps[-1]["PumpB Max %"] = self.saved_pumpB_max
+                    self.method_editor.update_table()
             
     def update_volume_delivered_progress(self, volume_delivered: float):
         if self.run_volume > 0:
             percent = max(0, min(100, int((volume_delivered / self.run_volume) * 100)))
-            label = "PumpA" if self.elution_method == "Isocratic" else "Gradient"
+            current_mode = "Isocratic"
+            if 0 <= self.current_step_index < len(self.method_sequence):
+                current_mode = self.method_sequence[self.current_step_index].get("Pump Mode", "Isocratic")
+            label = "PumpA" if current_mode == "Isocratic" else "Gradient"
             self.volume_delivered_progress_bar.setValue(percent)
             self.volume_delivered_progress_bar.setFormat(f"{label}: {volume_delivered:.2f} ml ({percent}%)")
         else:
             self.volume_delivered_progress_bar.setValue(0)
             self.volume_delivered_progress_bar.setFormat("Idle")
 
-    def open_pumpB_dialog(self):
-        if self.elution_method == "Isocratic":
-            self.pumpB_button.setEnabled(False)
-        else:
-            print("PumpB Button clicked") #placeholder for additional logic
+    def on_pumpA_volume_update(self, volume):
+        self.update_volume_delivered_progress(volume)
+        if self.run_volume > 0 and volume >= self.run_volume:
+            self.handle_next_step()
+
+    def on_gradient_volume_update(self, volume):
+        self.update_volume_delivered_progress(volume)
+        if self.run_volume > 0 and volume >= self.run_volume:
+            self.handle_next_step()
 
     def open_run_volume_dialog(self):
         dialog = Volume_Dialog(self)
@@ -1319,7 +1323,10 @@ class FPLCSystemApp(QMainWindow):
                 self.run_volume = new_run_volume
                 self.last_run_volume = new_run_volume
                 self.plot_widget.setXRange(0, self.run_volume)
-                #self.update_plot_title()
+                if self.method_editor.steps:
+                    self.method_editor.steps[-1]["Run Volume (ml)"] = self.run_volume
+                    self.method_editor.update_table()
+
             else:
                 self.run_volume = self.last_run_volume
 
@@ -1333,7 +1340,9 @@ class FPLCSystemApp(QMainWindow):
                 if self.run_volume > 0:
                     self.plot_widget.setXRange(0, self.run_volume)
                 self.update_plot_title()
-
+                if self.method_editor.steps:
+                    self.method_editor.steps[-1]["Flowrate (ml/min)"] = self.flowrate
+                    self.method_editor.update_table()
             else:
                 self.flowrate = self.last_flowrate
 
@@ -1341,22 +1350,35 @@ class FPLCSystemApp(QMainWindow):
         dialog = SystemValveDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.system_valve_position = dialog.combo_box.currentText()
-            #print(f"System_Valve_Position: {self.system_valve_position}")
+            if self.method_editor.steps:
+                self.method_editor.steps[-1]["System Valve"] = self.system_valve_position
+                self.method_editor.update_table()            
+
 
     def toggle_Fraction_Collector(self):
-        if self.selected_AUFS_value <= 0.0:
+        # Always toggle to ON first
+        self.fraction_collector_mode_enabled = not self.fraction_collector_mode_enabled
+        status = "ON" if self.fraction_collector_mode_enabled else "OFF"
+        self.fraction_collector_button.setText(f"Frac Collect ({status})")
+
+        # Update method editor if applicable
+        if self.method_editor.steps:
+            self.method_editor.steps[-1]["Frac Collect"] = status
+            self.method_editor.update_table()
+
+        # If turning ON, ensure diverter valve is also ON
+        if self.fraction_collector_mode_enabled and not self.divert_valve_mode:
+            self.divert_valve_mode = True
+            self.divert_valve_button.setText("Diverter(ON)")
+            if self.method_editor.steps:
+                self.method_editor.steps[-1]["Diverter"] = "ON"
+                self.method_editor.update_table()
+
+        # Show AUFS warning if value is invalid
+        if self.fraction_collector_mode_enabled and self.selected_AUFS_value <= 0.0:
             aufs_warning_dialog = AUFS_WarningDialog(self)
             if aufs_warning_dialog.exec() == QDialog.DialogCode.Accepted:
                 self.open_UV_Monitor_dialog()
-            return
-        self.fraction_collector_mode_enabled = not self.fraction_collector_mode_enabled
-        self.fraction_collector_button.setText("Frac Collect (ON)" if self.fraction_collector_mode_enabled else "Frac Collect (OFF)")
-
-        if self.fraction_collector_mode_enabled:
-            print("fraction_collector enabled")
-            
-        else:
-            print("fraction_collector mode disabled")
 
     def run_acquisition(self):
         if self.worker is not None and self.worker.is_running:
@@ -1427,17 +1449,22 @@ class FPLCSystemApp(QMainWindow):
 
         if eluate_volume >= self.run_volume:
             self.stop_save_acquisition()
+            # Check if the current step's End Action is "Stop"
+            method_sequence = self.method_editor.get_method_sequence()
+            if method_sequence and method_sequence[-1].get("End Action") == "Stop":
+                self.handle_method_stop()
 
     def stop_save_acquisition(self):
         if self.acquisition_stopped:
             return
         self.acquisition_stopped = True
-        
-        if hasattr(self, 'worker') and self.worker.is_running:
+                
+        if self.worker is not None and self.worker.is_running:
             self.worker.stop()
             self.worker.is_running = False
-            if self.thread is not None:
+        if self.thread is not None:
                 self.thread.join()
+                self.thread = None
 
         self.show_save_dialog()
         self.clear_plot_and_reset()
@@ -1572,7 +1599,16 @@ class FPLCSystemApp(QMainWindow):
             print(f"Dialog visible: {self.error_dialog.isVisible()}")
             self.error_dialog.set_error_cleared()
             self.error_dialog.exit_error_dialog()
-                        
+
+    def handle_valve_error(self, message):
+        QMessageBox.critical(self, "Valve Error", message)
+        self.handle_method_stop()
+
+    def handle_valve_position(self, position):
+        print(f"Valve Position: Valve successfully moved to: {position}")
+        #QMessageBox.information(self, "Valve Position", f"Valve successfully moved to: {position}")
+        
+
     def handle_disconnection(self):
         print("Client disconnected. Attempting to reconnect...")
         if self.listener:
@@ -1581,7 +1617,7 @@ class FPLCSystemApp(QMainWindow):
         self.connection = None
         self.connection_status_label.setText("FPLC not connected")
         self.connection_status_label.setStyleSheet("background-color: red; color: white; border: 1px solid black;")
-        self.update_manual_controls()
+        #self.update_manual_controls()
 
     def close_application(self):
         self.close()

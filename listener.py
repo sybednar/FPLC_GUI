@@ -1,4 +1,4 @@
-#listener.py
+#listener.py ver 0.4.5
 from PySide6.QtCore import QObject, Signal
 import threading
 import socket
@@ -18,6 +18,8 @@ class ReceiveClientSignalsAndData(QObject):
     stop_save_signal = Signal()
     pumpA_volume_signal = Signal(float)
     gradient_volume_signal = Signal(float)
+    valve_error_signal = Signal(str)
+    valve_position_signal = Signal(str)
 
     def __init__(self, connection):
         super().__init__()
@@ -87,6 +89,15 @@ class ReceiveClientSignalsAndData(QObject):
                         print(f"[Listener] Gradient_running {volume} ml")
                     except ValueError:
                         print(f"Invalid Gradient_running message: {message}")
+
+                elif message == "Valve Malfunction":
+                    print("Debug: Received Valve Malfunction message")
+                    self.valve_error_signal.emit("Valve failed to reach target position.<br>Run aborted")
+
+                elif message.startswith("VALVE_POSITION:"):       
+                    print(f"Debug: Received VALVE_POSITION message with position: {message.split(':', 1)[1]}")
+                    position = message.split(":", 1)[1]
+                    self.valve_position_signal.emit(position)
 
                 elif "HEARTBEAT" in message:
                     self.last_heartbeat = time.time()
