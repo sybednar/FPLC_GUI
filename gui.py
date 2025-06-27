@@ -1,4 +1,4 @@
-#gui.py (ver0.4.6) adding method editor
+#gui.py (ver0.4.7) revised method editor and removal of redundant button from gui
 # Imports and setup
 import sys
 import os
@@ -28,246 +28,7 @@ from method_editor import MethodEditor
 
 
 
-class OpenProgramModeDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Program Options")
-        self.setMinimumWidth(400)
-        
-        layout = QVBoxLayout()
-        font = self.font()
-        font.setPointSize(16)
-        self.setFont(font)
-        label = QLabel("Choose an option:")
-        layout.addWidget(label)
 
-        self.buttons = QDialogButtonBox()
-        self.exit_button = self.buttons.addButton("Exit", QDialogButtonBox.ButtonRole.RejectRole)
-        self.open_button = self.buttons.addButton("Open Method File", QDialogButtonBox.ButtonRole.ActionRole)
-        self.create_button = self.buttons.addButton("Create New Method", QDialogButtonBox.ButtonRole.AcceptRole)
-
-        layout.addWidget(self.buttons)
-        self.setLayout(layout)
-
-        self.buttons.clicked.connect(self.on_button_clicked)
-        self.selected_option = None
-
-    def on_button_clicked(self, button):
-        if button == self.exit_button:
-            self.selected_option = "Exit"
-            self.reject()
-        elif button == self.open_button:
-            self.selected_option = "Open"
-            self.accept()
-        elif button == self.create_button:
-            self.selected_option = "Create"
-            self.accept()
-
-
-class Volume_Dialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Set Run Volume")
-        self.setMinimumWidth(200)
-
-        # Main layout
-        main_layout = QVBoxLayout()
-
-        # Horizontal layout for spin box and label
-        h_layout = QHBoxLayout()
-
-        # Spin box for volume in ml
-        self.run_volume_ml_spinbox = QDoubleSpinBox()
-        self.run_volume_ml_spinbox.setRange(0.0, 99)
-        self.run_volume_ml_spinbox.setSingleStep(1)
-        self.run_volume_ml_spinbox.setDecimals(1)
-        self.run_volume_ml_spinbox.setMinimumWidth(75)
-        self.run_volume_ml_spinbox.setMinimumHeight(100)
-
-        # Style for dark theme
-        style = """
-        QDoubleSpinBox {
-            background-color: #2c2c2c;
-            color: #ffffff;
-            border: 1px solid #444444;
-            font-size: 36px;
-        }
-        QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
-            background-color: #444444;
-            border: none;
-            width: 40px;
-            height: 40px;
-            background-position: center;
-            background-repeat: no-repeat;
-        }
-        QDoubleSpinBox::up-button {
-            background-image: url(/home/sybednar/FPLC_controller_venv/FPLC_server/FPLC_GUI_customization/uparrow_3pt_white.png);
-        }
-        QDoubleSpinBox::down-button {
-            background-image: url(/home/sybednar/FPLC_controller_venv/FPLC_server/FPLC_GUI_customization/downarrow_3pt_white.png);
-        }
-        QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {
-            background-color: #555555;
-        }
-        """
-        self.run_volume_ml_spinbox.setStyleSheet(style)
-
-        # Font styling
-        font = self.font()
-        font.setPointSize(24)
-        self.setFont(font)
-
-        # Add widgets to layout
-        h_layout.addWidget(self.run_volume_ml_spinbox)
-        h_layout.addWidget(QLabel("Volume (ml)"), alignment=Qt.AlignmentFlag.AlignCenter)
-        main_layout.addLayout(h_layout)
-
-        # Confirm button
-        font.setPointSize(16)
-        self.setFont(font)
-        self.confirm_button = QPushButton("Confirm")
-        self.confirm_button.clicked.connect(self.accept)
-        main_layout.addWidget(self.confirm_button, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        self.setLayout(main_layout)
-        self.load_saved_values()
-
-    def load_saved_values(self):
-        if hasattr(self.parent(), 'saved_run_volume'):
-            self.run_volume_ml_spinbox.setValue(self.parent().saved_run_volume)
-
-    def accept(self):
-        self.parent().saved_run_volume = self.run_volume_ml_spinbox.value()
-        super().accept()
-
-    def get_run_volume(self):
-        return self.run_volume_ml_spinbox.value()
-
-
-class FlowRateDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Set FlowRate")
-        self.setMinimumWidth(200)  # Adjust the width as needed
-
-        # Create the main vertical layout
-        main_layout = QVBoxLayout()
-
-        # Create a horizontal layout for the spin box and label
-        h_layout = QHBoxLayout()
-
-        # Create a double spin box for ml/min
-        self.ml_per_min_spinbox = QDoubleSpinBox()
-        self.ml_per_min_spinbox.setRange(0.0, 9.9)  # 0 to 9.9 ml/min
-        self.ml_per_min_spinbox.setSingleStep(0.1)  # Increment by 0.1
-        self.ml_per_min_spinbox.setDecimals(1)  # Display one decimal place
-        self.ml_per_min_spinbox.setMinimumWidth(75)
-        self.ml_per_min_spinbox.setMinimumHeight(100)
-
-        # Apply custom styles to increase contrast of up/down arrows
-        style = """
-        QDoubleSpinBox {
-            background-color: #2c2c2c;  /* Dark background for the spin box */
-            color: #ffffff;  /* White text */
-            border: 1px solid #444444;  /* Border color */
-            font-size: 36px;  /* Increase font size */
-        }
-        QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
-            background-color: #444444;  /* Dark background for buttons */
-            border: none;  /* Remove border */
-            width: 40px;  /* Increase button width */
-            height: 40px;  /* Increase button height */
-            background-position: center;  /* Center the images */
-            background-repeat: no-repeat;  /* Do not repeat the images */
-        }
-        QDoubleSpinBox::up-button {
-            background-image: url(/home/sybednar/FPLC_controller_venv/FPLC_server/FPLC_GUI_customization/uparrow_3pt_white.png);
-        }
-        QDoubleSpinBox::down-button {
-            background-image: url(/home/sybednar/FPLC_controller_venv/FPLC_server/FPLC_GUI_customization/downarrow_3pt_white.png);
-        }
-        QDoubleSpinBox::up-button:hover, QSpinBox::down-button:hover {
-            background-color: #555555;  /* Lighter background on hover */
-        }
-        """
-        self.ml_per_min_spinbox.setStyleSheet(style)
-        font = self.font()
-        font.setPointSize(24)  # Increase font size
-        self.setFont(font)
-
-        # Add the spin box and label to the horizontal layout
-        h_layout.addWidget(self.ml_per_min_spinbox)
-        h_layout.addWidget(QLabel("ml/min"), alignment=Qt.AlignmentFlag.AlignCenter)
-
-        # Add the horizontal layout to the main vertical layout
-        main_layout.addLayout(h_layout)
-
-        font = self.font()
-        font.setPointSize(16)
-        self.setFont(font)
-
-        self.confirm_button = QPushButton("Confirm")
-        self.confirm_button.clicked.connect(self.accept)
-        main_layout.addWidget(self.confirm_button, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        self.setLayout(main_layout)
-        self.load_saved_values()  # Load previously saved values
-        
-    def load_saved_values(self):
-        # Load saved values from the parent (assuming you save them there)
-        if hasattr(self.parent(), 'saved_flowrate'):
-            ml_per_min = self.parent().saved_flowrate
-            self.ml_per_min_spinbox.setValue(ml_per_min)
-
-    def accept(self):
-        # Save the values upon acceptance
-        self.parent().saved_flowrate = self.ml_per_min_spinbox.value()
-        super().accept()
-
-    def get_flowrate(self):
-        return self.ml_per_min_spinbox.value()
-
-class RunVolume_WarningDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Warning")
-        self.setMinimumWidth(300)  # Adjust the width as needed
-        layout = QVBoxLayout()
-
-        self.label = QLabel("Set Run Volume > 0 sec")
-        layout.addWidget(self.label)
-
-        self.confirm_button = QPushButton("Confirm")
-        self.confirm_button.clicked.connect(self.accept)
-        layout.addWidget(self.confirm_button)
-
-        self.setLayout(layout)
-
-class FlowRate_WarningDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Warning")
-        self.setMinimumWidth(300)  # Adjust the width as needed
-        layout = QVBoxLayout()
-        self.label = QLabel("Set FlowRate > 0 ml/min")
-        layout.addWidget(self.label)
-        self.confirm_button = QPushButton("Confirm")
-        self.confirm_button.clicked.connect(self.accept)
-        layout.addWidget(self.confirm_button)
-        self.setLayout(layout)
-
-class AUFS_WarningDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Warning")
-        self.setMinimumWidth(300)  # Adjust the width as needed
-        layout = QVBoxLayout()
-        self.label = QLabel("Set UVMonitor AUFS value > 0 AUFS")
-        layout.addWidget(self.label)
-        self.confirm_button = QPushButton("Confirm")
-        self.confirm_button.clicked.connect(self.accept)
-        layout.addWidget(self.confirm_button)
-        self.setLayout(layout)
 
 class SetPumpAVolume_WarningDialog(QDialog):
     def __init__(self, parent=None):
@@ -348,125 +109,6 @@ class SaveDialog(QDialog):
 
         self.setLayout(layout)
 
-class ColumnTypeDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        font = self.font()
-        font.setPointSize(16)  # Increase font size
-        self.setFont(font)
-        self.setWindowTitle("Select Column Type")
-        self.setMinimumWidth(300)
-
-        layout = QVBoxLayout()
-
-        self.combo_box = QComboBox()
-        self.combo_box.addItems([
-            "Superdex-200",
-            "Superose-6",
-            "Mono Q 5/50",
-            "Mono S 5/50",
-            "His Trap",
-            "Other"
-        ])
-        layout.addWidget(self.combo_box)
-
-        self.confirm_button = QPushButton("Confirm")
-        self.confirm_button.clicked.connect(self.accept)  # Close dialog on confirm
-        layout.addWidget(self.confirm_button)
-
-        self.setLayout(layout)
-
-class SystemValveDialog(QDialog):   
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        font = self.font()
-        font.setPointSize(16)  # Increase font size
-        self.setFont(font)
-        self.setWindowTitle("System Valve Position")
-        self.setMinimumWidth(300)
-
-        layout = QVBoxLayout()
-
-        self.combo_box = QComboBox()
-
-        # Create a model to center-align items
-        model = QStandardItemModel()
-        for text in ["LOAD", "INJECT", "WASH"]:
-            item = QStandardItem(text)
-            item.setTextAlignment(Qt.AlignCenter)
-            model.appendRow(item)
-        self.combo_box.setModel(model)
-
-        # Center the current text in the combo box
-        self.combo_box.setEditable(True)
-        self.combo_box.lineEdit().setAlignment(Qt.AlignCenter)
-        self.combo_box.setEditable(False)
-
-        layout.addWidget(self.combo_box)
-
-        self.confirm_button = QPushButton("Confirm")
-        self.confirm_button.clicked.connect(self.accept)  # Close dialog on confirm
-        layout.addWidget(self.confirm_button)
-
-        self.setLayout(layout)
-
-# UV monitor AUFS setting Dialog class
-class UV_Monitor_Dialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        font = self.font()
-        font.setPointSize(16)  # Increase font size
-        self.setFont(font)
-        self.setWindowTitle("Set UV_Monitor/AUFS")
-        self.setMinimumWidth(200)
-        layout = QVBoxLayout()
-
-        # First combo box to specify uv-monitor
-        self.combo_box_uv_monitor = QComboBox()
-        self.combo_box_uv_monitor.addItems(["Pharmacia UV MII", "BioRad EM1"])
-        self.combo_box_uv_monitor.currentIndexChanged.connect(self.update_aufs_items)
-        layout.addWidget(self.combo_box_uv_monitor)
-
-        # Second combo box for AUFS values
-        self.combo_box_aufs = QComboBox()
-        self.combo_box_aufs.addItems([
-            "2.000 AUFS", "1.000 AUFS", "0.500 AUFS", "0.200 AUFS", "0.100 AUFS",
-            "0.050 AUFS", "0.020 AUFS", "0.010 AUFS", "0.005 AUFS", "0.002 AUFS", "0.001 AUFS"
-        ])
-        layout.addWidget(self.combo_box_aufs)
-
-        self.confirm_button = QPushButton("Confirm")
-        self.confirm_button.clicked.connect(self.accept)  # Close dialog on confirm
-        layout.addWidget(self.confirm_button)
-        self.setLayout(layout)
-
-    def update_aufs_items(self):
-        selected_uv_monitor_text = self.combo_box_uv_monitor.currentText()
-        if selected_uv_monitor_text == "BioRad EM1":
-            self.combo_box_aufs.clear()
-            self.combo_box_aufs.addItems([
-                "2.000 AUFS", "1.000 AUFS", "0.500 AUFS", "0.200 AUFS", "0.100 AUFS",
-                "0.050 AUFS", "0.020 AUFS", "0.010 AUFS"
-            ])
-        else:
-            self.combo_box_aufs.clear()
-            self.combo_box_aufs.addItems([
-                "2.000 AUFS", "1.000 AUFS", "0.500 AUFS", "0.200 AUFS", "0.100 AUFS",
-                "0.050 AUFS", "0.020 AUFS", "0.010 AUFS", "0.005 AUFS", "0.002 AUFS", "0.001 AUFS"
-            ])
-
-    def accept(self):
-        selected_aufs_text = self.combo_box_aufs.currentText()
-        self.parent().selected_AUFS_value = float(selected_aufs_text.split()[0])
-        selected_uv_monitor_text = self.combo_box_uv_monitor.currentText()
-        if selected_uv_monitor_text == "Pharmacia UV MII":
-            self.parent().uv_monitor_FS_value = 0.1
-        elif selected_uv_monitor_text == "BioRad EM1":
-            self.parent().uv_monitor_FS_value = 1.0
-            if self.parent().selected_AUFS_value <= 0.01:
-                self.parent().selected_AUFS_value = 0.01
-        self.parent().selected_uv_monitor = selected_uv_monitor_text
-        super().accept()   
 
 class FractionCollectorErrorDialog(QDialog):
     def __init__(self, parent=None):
@@ -586,130 +228,7 @@ class SolventExchangeDialog(QDialog):
         self.pumpA_button.setText("PumpA OFF")
         self.pumpB_button.setText("PumpB OFF")
         self.close()
-
-class PumpModeDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        font = self.font()
-        font.setPointSize(16)  # Increase font size
-        self.setFont(font)
-        self.setWindowTitle("Select Pump Mode")
-        self.setMinimumWidth(300)
-        layout = QVBoxLayout()
-
-        self.combo_box = QComboBox()
-        self.combo_box.addItems(["Isocratic", "Gradient"])
-        layout.addWidget(self.combo_box)
-
-        confirm_button = QPushButton("Confirm")
-        confirm_button.clicked.connect(self.accept)
-        layout.addWidget(confirm_button)
-
-        self.setLayout(layout)
-
-    def get_selected_mode(self):
-        return self.combo_box.currentText()
-
-class gradient_settings_Dialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("PumpB Gradient Settings")
-        self.setMinimumWidth(300)
-
-        main_layout = QVBoxLayout()
-
-        # Shared style for both spin boxes
-        style = """
-        QDoubleSpinBox {
-            background-color: #2c2c2c;
-            color: #ffffff;
-            border: 1px solid #444444;
-            font-size: 36px;
-        }
-        QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
-            background-color: #444444;
-            border: none;
-            width: 40px;
-            height: 40px;
-            background-position: center;
-            background-repeat: no-repeat;
-        }
-        QDoubleSpinBox::up-button {
-            background-image: url(/home/sybednar/FPLC_controller_venv/FPLC_server/FPLC_GUI_customization/uparrow_3pt_white.png);
-        }
-        QDoubleSpinBox::down-button {
-            background-image: url(/home/sybednar/FPLC_controller_venv/FPLC_server/FPLC_GUI_customization/downarrow_3pt_white.png);
-        }
-        QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {
-            background-color: #555555;
-        }
-        """
-        font = self.font()
-        font.setPointSize(24)
-        self.setFont(font)
-
-        # PumpB Min SpinBox
-        pumpB_min_layout = QVBoxLayout()
-        pumpB_min_label = QLabel("Min (%)")
-        pumpB_min_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.pumpB_min_spinbox = QDoubleSpinBox()
-        self.pumpB_min_spinbox.setRange(0, 100)
-        self.pumpB_min_spinbox.setSingleStep(1)
-        self.pumpB_min_spinbox.setDecimals(1)
-        self.pumpB_min_spinbox.setMinimumWidth(75)
-        self.pumpB_min_spinbox.setMinimumHeight(100)
-        self.pumpB_min_spinbox.setStyleSheet(style)
-        pumpB_min_layout.addWidget(pumpB_min_label)
-        pumpB_min_layout.addWidget(self.pumpB_min_spinbox)
-
-        # PumpB Max SpinBox
-        pumpB_max_layout = QVBoxLayout()
-        pumpB_max_label = QLabel("Max (%)")
-        pumpB_max_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.pumpB_max_spinbox = QDoubleSpinBox()
-        self.pumpB_max_spinbox.setRange(0, 100)
-        self.pumpB_max_spinbox.setSingleStep(1)
-        self.pumpB_max_spinbox.setDecimals(1)
-        self.pumpB_max_spinbox.setMinimumWidth(75)
-        self.pumpB_max_spinbox.setMinimumHeight(100)
-        self.pumpB_max_spinbox.setStyleSheet(style)
-        pumpB_max_layout.addWidget(pumpB_max_label)
-        pumpB_max_layout.addWidget(self.pumpB_max_spinbox)
-        
-        # Combine into horizontal layout
-        spinbox_row = QHBoxLayout()
-        spinbox_row.addLayout(pumpB_min_layout)
-        spinbox_row.addLayout(pumpB_max_layout)
-
-        main_layout.addLayout(spinbox_row)
-
-        # Confirm Button
-        font.setPointSize(16)
-        self.setFont(font)
-        self.confirm_button = QPushButton("Confirm")
-        self.confirm_button.clicked.connect(self.accept)
-        main_layout.addWidget(self.confirm_button, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        self.setLayout(main_layout)
-        self.load_saved_values()
-
-    def load_saved_values(self):
-        if hasattr(self.parent(), 'saved_pumpB_min'):
-            self.pumpB_min_spinbox.setValue(self.parent().saved_pumpB_min)
-        if hasattr(self.parent(), 'saved_pumpB_max'):
-            self.pumpB_max_spinbox.setValue(self.parent().saved_pumpB_max)
-
-    def accept(self):
-        self.parent().saved_pumpB_min = self.pumpB_min_spinbox.value()
-        self.parent().saved_pumpB_max = self.pumpB_max_spinbox.value()
-        super().accept()
-
-    def get_pumpB_min(self):
-        return self.pumpB_min_spinbox.value()
-
-    def get_pumpB_max(self):
-        return self.pumpB_max_spinbox.value()
-    
+   
 
 #---------- Worker class for background data acquisition----------
 class Worker(QObject):
@@ -911,10 +430,6 @@ class FPLCSystemApp(QMainWindow):
         self.method_stop_button.setGeometry(50, 260, 100, 30)
         self.method_stop_button.clicked.connect(self.handle_method_stop)
 
-        self.program_mode_button = QPushButton("Program_Method", container)
-        self.program_mode_button.setGeometry(50, 460, 100, 30)
-        self.program_mode_button.clicked.connect(self.handle_program_mode)
-
         # Right-side buttons
         self.Peak_ID_button = QPushButton("Peak_ID", container)
         self.Peak_ID_button.setGeometry(874, 100, 100, 30)
@@ -929,114 +444,34 @@ class FPLCSystemApp(QMainWindow):
         self.Peak_Smoothing_button.clicked.connect(self.handle_Peak_Smoothing_button_click)
 
         self.desktop_button = QPushButton("Desktop", container)
-        self.desktop_button.setGeometry(874, 260, 100, 30)
+        self.desktop_button.setGeometry(874, 680, 100, 30)
         self.desktop_button.clicked.connect(self.close_application)
-
-        # Settings and control buttons
-        self.system_valve_button = QPushButton("System_Valve", container)
-        self.system_valve_button.setGeometry(212, 360, 100, 30)
-        self.system_valve_button.clicked.connect(self.open_system_valve_dialog)
-
-        self.FlowRate_button = QPushButton("FlowRate", container)
-        self.FlowRate_button.setGeometry(322, 360, 100, 30)
-        self.FlowRate_button.clicked.connect(self.open_flowrate_dialog)
-
-        self.run_volume_button = QPushButton("Set Run Volume", container)
-        self.run_volume_button.setGeometry(432, 360, 100, 30)
-        self.run_volume_button.clicked.connect(self.open_run_volume_dialog)
-
-        self.pump_mode_button = QPushButton("Pump Mode: Isocratic", container)
-        self.pump_mode_button.setGeometry(542, 360, 210, 30)
-        self.pump_mode_button.clicked.connect(self.open_pump_mode_dialog)
-  
-
-
-        self.column_type_button = QPushButton("Column Type", container)
-        self.column_type_button.setGeometry(212, 400, 100, 30)
-        self.column_type_button.clicked.connect(self.open_column_type_dialog)
-
-        self.fraction_collector_button = QPushButton("Frac Collect (OFF)", container)
-        self.fraction_collector_button.setGeometry(322, 400, 100, 30)
-        self.fraction_collector_button.clicked.connect(self.toggle_Fraction_Collector)
-
-        self.UVMonitor_button = QPushButton("UVMonitor", container)
-        self.UVMonitor_button.setGeometry(432, 400, 100, 30)
-        self.UVMonitor_button.clicked.connect(self.open_UV_Monitor_dialog)
-        
-        self.divert_valve_button = QPushButton("Diverter(OFF)", container)
-        self.divert_valve_button.setGeometry(542, 400, 100, 30)
-        self.divert_valve_button.clicked.connect(self.toggle_divert_valve)
-               
-
-
-        # Additional labels
-        #settings_label = QLabel("Flow", container)
-        #settings_label.setGeometry(136, 360, 100, 30)
-        #settings_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        #fraction_collector_label = QLabel("Collection", container)
-        #fraction_collector_label.setGeometry(110, 400, 100, 30)
-        #fraction_collector_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-
+            
         # Pump and valve control buttons
         self.pump_wash_button = QPushButton("Solvent Change", container)
-        self.pump_wash_button.setGeometry(874, 360, 100, 30)
+        self.pump_wash_button.setGeometry(50, 360, 100, 30)
         self.pump_wash_button.clicked.connect(self.open_solvent_exchange_dialog)
 
-        self.pump_calibration_button = QPushButton("Pump_Calibration", container)
-        self.pump_calibration_button.setGeometry(874, 400, 100, 30)
-        self.pump_calibration_button.clicked.connect(self.toggle_pump_calibration)
+        #self.pump_calibration_button = QPushButton("Pump_Calibration", container)
+        #self.pump_calibration_button.setGeometry(874, 400, 100, 30)
+        #self.pump_calibration_button.clicked.connect(self.toggle_pump_calibration)
         
         Pumps_label = QLabel("Pumps", container)
-        Pumps_label.setGeometry(360, 680, 100, 30)
+        Pumps_label.setGeometry(280, 680, 100, 30)
         Pumps_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.volume_delivered_progress_bar = QProgressBar(self)
-        self.volume_delivered_progress_bar.setGeometry(438, 680, 150, 30)
+        self.volume_delivered_progress_bar.setGeometry(363, 680, 300, 30)
         self.volume_delivered_progress_bar.setRange(0, 100)
         self.volume_delivered_progress_bar.setValue(0)
         self.volume_delivered_progress_bar.setFormat("Idle")
         self.volume_delivered_progress_bar.setStyleSheet("QProgressBar { color: white; }")
 
         self.method_editor = MethodEditor(container, main_app=self)
-        self.method_editor.setGeometry(70, 480, 870, 180) # Adjust size and position as needed
-
-
-    def handle_program_mode(self):
-        if self.method_editor.steps:
-            msg_box = QMessageBox(self)
-            msg_box.setWindowTitle("Existing Method Detected")
-            msg_box.setText("A method is already loaded. What would you like to do?")
-            save_btn = msg_box.addButton("Save", QMessageBox.AcceptRole)
-            delete_btn = msg_box.addButton("Delete", QMessageBox.DestructiveRole)
-            cancel_btn = msg_box.addButton("Cancel", QMessageBox.RejectRole)
-            msg_box.exec()
-
-            if msg_box.clickedButton() == save_btn:
-                self.method_editor.save_method()
-                self.method_editor.new_method()
-                self.method_editor.add_step(0, None)
-            elif msg_box.clickedButton() == delete_btn:
-                self.method_editor.new_method()
-                self.method_editor.add_step(0, None)
-            else:
-                return# Cancelled
-
-        else:
-            dialog = OpenProgramModeDialog(self)
-            if dialog.exec() == QDialog.DialogCode.Accepted:
-                if dialog.selected_option == "Open":
-                    self.method_editor.load_method()
-                    if not self.method_editor.steps:
-                        self.method_editor.add_step(0, None)
-                elif dialog.selected_option == "Create":
-                    self.method_editor.new_method()
-                    self.method_editor.add_step(0, None)
-
-
+        self.method_editor.setGeometry(30, 410, 960, 240) # Adjust size and position as needed
 
     def handle_method_run(self):
+        self.set_solvent_button_enabled(False)
         self.method_sequence = self.method_editor.get_method_sequence()
         self.current_step_index = 0
         self.run_next_step()
@@ -1053,6 +488,9 @@ class FPLCSystemApp(QMainWindow):
 
         step = self.method_sequence[self.current_step_index]
 
+        # Highlight the current step row
+        self.method_editor.highlight_step_row(self.current_step_index)
+
         # Update flowrate and run volume
         self.flowrate = float(step["Flowrate (ml/min)"])
         self.run_volume = float(step["Run Volume (ml)"])
@@ -1065,11 +503,6 @@ class FPLCSystemApp(QMainWindow):
         self.plot_widget.setXRange(0, self.run_volume)
         self.update_plot_title()
 
-        # Check Frac Collect status for this step
-        frac_collect = step.get("Frac Collect", "OFF")
-        self.fraction_collector_mode_enabled = frac_collect == "ON"
-        self.fraction_collector_button.setText(f"Frac Collect ({frac_collect})")
-
         # Determine pump mode and prepare run packet
         pump_mode = step.get("Pump Mode", "Isocratic")
         run_packet = {
@@ -1079,8 +512,11 @@ class FPLCSystemApp(QMainWindow):
             "DIVERTER_VALVE": step["Diverter"],
             "START_PUMPS": True
         }
-        if self.fraction_collector_mode_enabled:
+        #if self.fraction_collector_mode_enabled: #removed ver 4.6.5
+        if step.get("Monitor", "UV_OFF") == "UV_ON": #added ver 4.6.5
             run_packet["START_ADC"] = True
+        if step.get("Frac Collect", "OFF") == "ON":
+            run_packet["START_FRAC"] = True
 
         if pump_mode == "Gradient":
             gradient = step.get("PumpB Gradient", {"Min": 0.0, "Max": 100.0})
@@ -1100,12 +536,15 @@ class FPLCSystemApp(QMainWindow):
             self.handle_disconnection()
             return
 
-        if self.fraction_collector_mode_enabled:
+        if step.get("Monitor", "UV_OFF") == "UV_ON": #addded ver 4.6.5
             self.run_acquisition()
 
     def handle_next_step(self):
         if self.current_step_index >= len(self.method_sequence):
             return
+        
+        # Reset the previous step row color
+        self.method_editor.reset_step_row_color(self.current_step_index)
 
         step = self.method_sequence[self.current_step_index]
         end_action = step.get("End Action", "Continue")
@@ -1134,15 +573,14 @@ class FPLCSystemApp(QMainWindow):
                 "PumpB_max_percent": 0.0
             }
 
-            if self.fraction_collector_mode_enabled:
+            if self.method_sequence and self.method_sequence[-1].get("Monitor", "UV_OFF") == "UV_ON":
                 stop_method_packet["STOP_ADC"] = True
-                self.fraction_collector_mode_enabled = False
-                self.fraction_collector_button.setText("Frac Collect (OFF)")
+            
+            if self.method_sequence and self.method_sequence[-1].get("Frac Collect", "OFF") == "ON":
+                stop_method_packet["STOP_FRAC"] = True
 
             if self.divert_valve_mode:
                 stop_method_packet["DIVERTER_VALVE"] = False
-                self.divert_valve_button.setText("Diverter(OFF)")
-                self.divert_valve_mode = False
 
             try:
                 self.connection.sendall(f'METHOD_STOP_JSON:{json.dumps(stop_method_packet)}'.encode('utf-8'))
@@ -1152,7 +590,7 @@ class FPLCSystemApp(QMainWindow):
                 self.handle_disconnection()
 
             self.reset_progress_bar()
-
+            self.set_solvent_button_enabled(True)
             if self.fraction_collector_mode_enabled:
                 self.stop_save_acquisition()
 
@@ -1165,13 +603,6 @@ class FPLCSystemApp(QMainWindow):
     def handle_Peak_Smoothing_button_click(self):
         print("Peak_Smoothing Button, set Savitzky-Golay window length and polyorder values")
    
-    def update_manual_controls(self):
-        is_connected = self.connection is not None and self.connection.fileno() != -1
-        enable_controls = self.manual_mode_enabled and is_connected
-        #self.start_button.setEnabled(enable_controls)
-        #self.pause_button.setEnabled(enable_controls)
-        #self.stop_save_button.setEnabled(enable_controls)
-
     def toggle_pump_calibration(self):
         print("Pump_Calibration Button clicked")
         #self.toggle_pump_calibration_mode = 'OFF'
@@ -1203,7 +634,6 @@ class FPLCSystemApp(QMainWindow):
                 self.connection = self.server.accept_connection()
                 self.connection_status_label.setText("FPLC connected")
                 self.connection_status_label.setStyleSheet("background-color: green; color: white; border: 1px solid black;")
-                #self.update_manual_controls()
                 self.connection_established.emit() #Emit signal to notify connection is established
 
                 if not hasattr(self, 'listener') or self.listener is None:
@@ -1235,7 +665,14 @@ class FPLCSystemApp(QMainWindow):
             self.solvent_exchange_dialog = SolventExchangeDialog(self)
             self.solvent_exchange_dialog.setModal(True)
             self.solvent_exchange_dialog.show() #.show() ensures the dialog is modal and non-blocking
-        
+
+    def set_solvent_button_enabled(self, enabled):
+        self.pump_wash_button.setEnabled(enabled)
+        if enabled:
+            self.pump_wash_button.setStyleSheet("")# Reset to default
+        else:
+            self.pump_wash_button.setStyleSheet("color: gray; background-color: #2e2e2e;")
+
     def handle_pumpA_wash_completed(self):
         print("[DEBUG] PumpA wash completed signal received")
         self.pumpA_wash_done = True
@@ -1271,26 +708,6 @@ class FPLCSystemApp(QMainWindow):
         self.pumpA_wash_done = False
         self.pumpB_wash_done = False
         
-    def open_pump_mode_dialog(self):
-        dialog = PumpModeDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            selected_mode = dialog.get_selected_mode()
-            self.elution_method = selected_mode
-            self.pump_mode_button.setText(f"Pump Mode: {selected_mode}")
-            if self.method_editor.steps:
-                self.method_editor.steps[-1]["Pump Mode"] = selected_mode
-                self.method_editor.update_table()
-        # Open gradient settings dialog if Gradient is selected
-        if selected_mode == "Gradient":
-            gradient_dialog = gradient_settings_Dialog(self)
-            if gradient_dialog.exec() == QDialog.DialogCode.Accepted:
-                self.saved_pumpB_min = gradient_dialog.get_pumpB_min()
-                self.saved_pumpB_max = gradient_dialog.get_pumpB_max()
-                print(f"Gradient PumpB setting: Min = {self.saved_pumpB_min}%, Max = {self.saved_pumpB_max}%")
-                if self.method_editor.steps:
-                    self.method_editor.steps[-1]["PumpB Min %"] = self.saved_pumpB_min
-                    self.method_editor.steps[-1]["PumpB Max %"] = self.saved_pumpB_max
-                    self.method_editor.update_table()
             
     def update_volume_delivered_progress(self, volume_delivered: float):
         if self.run_volume > 0:
@@ -1315,71 +732,6 @@ class FPLCSystemApp(QMainWindow):
         if self.run_volume > 0 and volume >= self.run_volume:
             self.handle_next_step()
 
-    def open_run_volume_dialog(self):
-        dialog = Volume_Dialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            new_run_volume = dialog.get_run_volume()
-            if new_run_volume > 0:
-                self.run_volume = new_run_volume
-                self.last_run_volume = new_run_volume
-                self.plot_widget.setXRange(0, self.run_volume)
-                if self.method_editor.steps:
-                    self.method_editor.steps[-1]["Run Volume (ml)"] = self.run_volume
-                    self.method_editor.update_table()
-
-            else:
-                self.run_volume = self.last_run_volume
-
-    def open_flowrate_dialog(self):
-        dialog = FlowRateDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            new_flowrate = round(dialog.get_flowrate(), 2)
-            if new_flowrate > 0:
-                self.flowrate = new_flowrate
-                self.last_flowrate = new_flowrate
-                if self.run_volume > 0:
-                    self.plot_widget.setXRange(0, self.run_volume)
-                self.update_plot_title()
-                if self.method_editor.steps:
-                    self.method_editor.steps[-1]["Flowrate (ml/min)"] = self.flowrate
-                    self.method_editor.update_table()
-            else:
-                self.flowrate = self.last_flowrate
-
-    def open_system_valve_dialog(self):
-        dialog = SystemValveDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.system_valve_position = dialog.combo_box.currentText()
-            if self.method_editor.steps:
-                self.method_editor.steps[-1]["System Valve"] = self.system_valve_position
-                self.method_editor.update_table()            
-
-
-    def toggle_Fraction_Collector(self):
-        # Always toggle to ON first
-        self.fraction_collector_mode_enabled = not self.fraction_collector_mode_enabled
-        status = "ON" if self.fraction_collector_mode_enabled else "OFF"
-        self.fraction_collector_button.setText(f"Frac Collect ({status})")
-
-        # Update method editor if applicable
-        if self.method_editor.steps:
-            self.method_editor.steps[-1]["Frac Collect"] = status
-            self.method_editor.update_table()
-
-        # If turning ON, ensure diverter valve is also ON
-        if self.fraction_collector_mode_enabled and not self.divert_valve_mode:
-            self.divert_valve_mode = True
-            self.divert_valve_button.setText("Diverter(ON)")
-            if self.method_editor.steps:
-                self.method_editor.steps[-1]["Diverter"] = "ON"
-                self.method_editor.update_table()
-
-        # Show AUFS warning if value is invalid
-        if self.fraction_collector_mode_enabled and self.selected_AUFS_value <= 0.0:
-            aufs_warning_dialog = AUFS_WarningDialog(self)
-            if aufs_warning_dialog.exec() == QDialog.DialogCode.Accepted:
-                self.open_UV_Monitor_dialog()
-
     def run_acquisition(self):
         if self.worker is not None and self.worker.is_running:
             print("Acquisition already running.")
@@ -1391,7 +743,7 @@ class FPLCSystemApp(QMainWindow):
         self.worker = Worker(self.logger.append_data_row, self, self.selected_uv_monitor, self.selected_AUFS_value, self.connection)
         self.listener.data_received_signal.connect(self.worker.handle_data_received)
         self.worker.data_signal.connect(self.update_plot_data)
-        self.worker.finished.connect(self.enable_buttons)
+        #self.worker.finished.connect(self.enable_buttons)
         self.worker.error_signal.connect(self.handle_fraction_collector_error)
         self.worker.error_cleared_signal.connect(self.handle_fraction_collector_error_cleared)
         self.thread = threading.Thread(target=self.worker.run, name="WorkerThread")
@@ -1468,13 +820,14 @@ class FPLCSystemApp(QMainWindow):
 
         self.show_save_dialog()
         self.clear_plot_and_reset()
+        self.set_solvent_button_enabled(True)
         self.reset_progress_bar()
 
     def show_save_dialog(self):
         dialog = SaveDialog(self)
         dialog.accepted.connect(self.save_data)
         dialog.rejected.connect(self.clear_plot_and_reset)
-        dialog.finished.connect(self.enable_buttons)
+        #dialog.finished.connect(self.enable_buttons)
         dialog.exec()
 
     def save_data(self):
@@ -1505,12 +858,13 @@ class FPLCSystemApp(QMainWindow):
         self.chan2_data.clear()
         print('Data cleared. Ready for next acquisition.')
 
-    def enable_buttons(self):
-        self.run_volume_button.setEnabled(True)
+    #def enable_buttons(self):
+        #print('Buttons enabled')
+        #self.run_volume_button.setEnabled(True)
         #self.start_button.setEnabled(True)
 
     def update_plot_title(self):
-        plot_title = f"<b><br>{self.selected_column_type}: {self.RunDateTime}</b><br>Flowrate: {self.flowrate} ml/min, {self.selected_uv_monitor}: {self.selected_AUFS_value} AUFS"
+        plot_title = f"<b><br>{self.selected_column_type}: {self.RunDateTime}</b><br>Flowrate: {self.flowrate: .1f} ml/min, {self.selected_uv_monitor}: {self.selected_AUFS_value: .3f} AUFS"
         self.plot_widget.setTitle(plot_title, size='12pt', color='w')
         if self.selected_uv_monitor == "Pharmacia UV MII":
             self.max_y_value = self.selected_AUFS_value
@@ -1518,19 +872,6 @@ class FPLCSystemApp(QMainWindow):
             self.max_y_value = 0.1 * self.selected_AUFS_value
         self.plot_widget.setYRange(0, self.max_y_value)
 
-    def open_column_type_dialog(self):
-        dialog = ColumnTypeDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.selected_column_type = dialog.combo_box.currentText()
-            self.update_plot_title()
-
-    def open_UV_Monitor_dialog(self):
-        dialog = UV_Monitor_Dialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            print(f"Selected AUFS value: {self.selected_AUFS_value}")
-            print(f"Selected UV monitor: {self.selected_uv_monitor}")
-            print(f"UV monitor FS value: {self.uv_monitor_FS_value}")
-            self.update_plot_title()
 
     def open_pause_dialog(self):
         dialog = PauseDialog(self)
