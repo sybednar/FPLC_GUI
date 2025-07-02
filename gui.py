@@ -1,4 +1,4 @@
-#gui.py (ver0.4.7) revised method editor and removal of redundant button from gui
+#gui.py (ver0.4.8) added data analysis module
 # Imports and setup
 import sys
 import os
@@ -12,23 +12,26 @@ from time import sleep
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QMessageBox, QVBoxLayout, QHBoxLayout,
     QWidget, QLabel, QPushButton, QComboBox, QSpinBox, QDoubleSpinBox,
-    QGridLayout, QDialog, QDialogButtonBox, QProgressBar
+    QGridLayout, QDialog, QDialogButtonBox, QProgressBar, QFileDialog
 )
 from PySide6.QtCore import Signal, QObject, Qt
-from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem
+from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem, QPalette, QColor
 import pyqtgraph as pg
+from pyqtgraph.exporters import ImageExporter
 import socket
 import json
+import pandas as pd
 from network import FPLCServer
 from hardware import set_gpio17, toggle_gpio17
 from plotting import create_plot_widget, update_plot
 from data_logger import DataLogger
 from listener import ReceiveClientSignalsAndData
 from method_editor import MethodEditor
+from data_analysis import replot_from_csv, smooth_and_detect_peaks, extract_metadata_from_csv
 
-
-
-
+import data_analysis
+print("Using data_analysis from:", data_analysis.__file__)
+               
 
 class SetPumpAVolume_WarningDialog(QDialog):
     def __init__(self, parent=None):
@@ -228,7 +231,181 @@ class SolventExchangeDialog(QDialog):
         self.pumpA_button.setText("PumpA OFF")
         self.pumpB_button.setText("PumpB OFF")
         self.close()
-   
+
+class AdaptiveStepSpinBox(QDoubleSpinBox):
+    def stepBy(self, steps):
+        current = self.value()
+        if current < 1000:
+            step = 100
+        elif current < 10000:
+            step = 1000
+        elif current < 100000:
+            step = 10000
+        elif current < 1e6:
+            step = 100000
+        else:
+            step = 1e6
+        self.setSingleStep(step)
+        super().stepBy(steps)
+
+
+class PeakSmoothingDialog(QDialog):
+    parameters_changed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Baseline and Peak Smoothing")
+        self.setMinimumWidth(500)
+
+        main_layout = QVBoxLayout()
+        grid_layout = QGridLayout()
+        self.move(200,200)
+        # --- Open Data File Button ---
+        self.open_data_button = QPushButton("Open Data File")
+        main_layout.addWidget(self.open_data_button)
+        if parent and hasattr(parent, 'Regraph_data_file'):
+            self.open_data_button.clicked.connect(parent.Regraph_data_file)
+
+        # --- Section Headers ---
+        self.left_header = QLabel("<b>Baseline Correction</b>")
+        self.right_header = QLabel("<b>Peak Detection</b>")
+        self.left_header.setAlignment(Qt.AlignCenter)
+        self.right_header.setAlignment(Qt.AlignCenter)
+        grid_layout.addWidget(self.left_header, 0, 0)
+        grid_layout.addWidget(self.right_header, 0, 1)
+
+        # --- Baseline Controls ---
+        self.baseline_checkbox = QPushButton("AsLS Baseline (OFF)")
+        self.baseline_checkbox.setCheckable(True)
+        self.baseline_checkbox.setChecked(False)
+        self.baseline_checkbox.clicked.connect(self.toggle_baseline)
+
+        self.lam_label = QLabel("AsLS λ (lambda):")
+        self.lam_spin = AdaptiveStepSpinBox()
+        self.lam_spin.setRange(1e2, 1e8)
+        self.lam_spin.setDecimals(0)
+        self.lam_spin.setValue(1e5)
+
+        self.p_label = QLabel("AsLS p:")
+        self.p_spin = QDoubleSpinBox()
+        self.p_spin.setRange(0.001, 1.0)
+        self.p_spin.setDecimals(3)
+        self.p_spin.setSingleStep(0.01)
+        self.p_spin.setValue(0.01)
+
+        self.max_iter_label = QLabel("AsLS max_iter:")
+        self.max_iter_spin = QSpinBox()
+        self.max_iter_spin.setRange(1, 50)
+        self.max_iter_spin.setValue(10)
+
+        # --- Peak Detection Controls ---
+        self.peak_id_button = QPushButton("Peak_ID (OFF)")
+        self.peak_id_button.setCheckable(True)
+        self.peak_id_button.setChecked(False)
+        self.peak_id_button.clicked.connect(self.toggle_peak_id)
+        self.peak_id_on = False
+
+        self.window_label = QLabel("SG_Window Length (odd):")
+        self.window_spin = QSpinBox()
+        self.window_spin.setRange(5, 199)
+        self.window_spin.setSingleStep(2)
+        self.window_spin.setValue(51)
+
+        self.poly_label = QLabel("SG_Polynomial Order:")
+        self.poly_spin = QSpinBox()
+        self.poly_spin.setRange(1, 10)
+        self.poly_spin.setValue(3)
+
+        self.distance_label = QLabel("Min Distance Between Peaks:")
+        self.distance_spin = QSpinBox()
+        self.distance_spin.setRange(1, 1000)
+        self.distance_spin.setValue(100)
+
+        # --- Add Widgets to Grid ---
+        grid_layout.addWidget(self.baseline_checkbox, 1, 0)
+        grid_layout.addWidget(self.lam_label, 2, 0)
+        grid_layout.addWidget(self.lam_spin, 3, 0)
+        grid_layout.addWidget(self.p_label, 4, 0)
+        grid_layout.addWidget(self.p_spin, 5, 0)
+        grid_layout.addWidget(self.max_iter_label, 6, 0)
+        grid_layout.addWidget(self.max_iter_spin, 7, 0)
+
+        grid_layout.addWidget(self.peak_id_button, 1, 1)
+        grid_layout.addWidget(self.window_label, 2, 1)
+        grid_layout.addWidget(self.window_spin, 3, 1)
+        grid_layout.addWidget(self.poly_label, 4, 1)
+        grid_layout.addWidget(self.poly_spin, 5, 1)
+        grid_layout.addWidget(self.distance_label, 6, 1)
+        grid_layout.addWidget(self.distance_spin, 7, 1)
+
+        # --- Confirm and Exit Buttons ---
+        button_layout = QHBoxLayout()
+        self.confirm_button = QPushButton("Save Processed Data")
+        self.exit_button = QPushButton("Exit")
+        button_layout.addWidget(self.confirm_button)
+        button_layout.addWidget(self.exit_button)
+
+        main_layout.addLayout(grid_layout)
+        main_layout.addLayout(button_layout)
+        self.setLayout(main_layout)
+
+        self.confirm_button.clicked.connect(self.accept)
+        self.exit_button.clicked.connect(self.reject)
+
+        for spin in [self.lam_spin, self.p_spin, self.max_iter_spin, self.window_spin, self.poly_spin, self.distance_spin]:
+            spin.valueChanged.connect(lambda _: self.parameters_changed.emit())
+        self.baseline_checkbox.clicked.connect(lambda: self.parameters_changed.emit())
+
+        self.update_baseline_controls()
+        self.update_peak_controls()
+
+    def toggle_baseline(self):
+        is_checked = self.baseline_checkbox.isChecked()
+        self.baseline_checkbox.setText("AsLS Baseline (ON)" if is_checked else "AsLS Baseline (OFF)")
+        self.update_baseline_controls()
+
+    def update_baseline_controls(self):
+        enabled = self.baseline_checkbox.isChecked()
+        for widget in [self.lam_spin, self.p_spin, self.max_iter_spin]:
+            widget.setEnabled(enabled)
+            palette = widget.palette()
+            palette.setColor(QPalette.ColorRole.Text, QColor("white") if enabled else QColor("gray"))
+            widget.setPalette(palette)
+
+        for label in [self.lam_label, self.p_label, self.max_iter_label]:
+            palette = label.palette()
+            palette.setColor(QPalette.ColorRole.WindowText, QColor("white") if enabled else QColor("gray"))
+            label.setPalette(palette)
+
+    def toggle_peak_id(self):
+        self.peak_id_on = not self.peak_id_on
+        self.peak_id_button.setText("Peak_ID (ON)" if self.peak_id_on else "Peak_ID (OFF)")
+        self.update_peak_controls()
+        self.parameters_changed.emit()
+
+    def update_peak_controls(self):
+        enabled = self.peak_id_on
+        for widget in [self.window_spin, self.poly_spin, self.distance_spin]:
+            widget.setEnabled(enabled)
+            palette = widget.palette()
+            palette.setColor(QPalette.ColorRole.Text, QColor("white") if enabled else QColor("gray"))
+            widget.setPalette(palette)
+        for label in [self.window_label, self.poly_label, self.distance_label]:
+            palette = label.palette()
+            palette.setColor(QPalette.ColorRole.WindowText, QColor("white") if enabled else QColor("gray"))
+            label.setPalette(palette)
+
+    def get_values(self):
+        return (
+            self.window_spin.value(),
+            self.poly_spin.value(),
+            self.peak_id_on,
+            self.distance_spin.value(),
+            self.baseline_checkbox.isChecked(),
+            self.lam_spin.value(),
+            self.p_spin.value(),
+            self.max_iter_spin.value()
+        )
 
 #---------- Worker class for background data acquisition----------
 class Worker(QObject):
@@ -431,17 +608,17 @@ class FPLCSystemApp(QMainWindow):
         self.method_stop_button.clicked.connect(self.handle_method_stop)
 
         # Right-side buttons
-        self.Peak_ID_button = QPushButton("Peak_ID", container)
-        self.Peak_ID_button.setGeometry(874, 100, 100, 30)
-        self.Peak_ID_button.clicked.connect(self.handle_Peak_ID_button_click)
+        self.Regraph_button = QPushButton("ReGraph", container)
+        self.Regraph_button.setGeometry(874, 100, 100, 30)
+        self.Regraph_button.clicked.connect(self.Regraph_data_file)
 
-        self.Baseline_Corr_button = QPushButton("Baseline_Corr", container)
-        self.Baseline_Corr_button.setGeometry(874, 140, 100, 30)
-        self.Baseline_Corr_button.clicked.connect(self.handle_Baseline_Corr_button_click)
+        self.Peak_Processing_button = QPushButton("Peak_Processing", container)
+        self.Peak_Processing_button.setGeometry(874, 180, 100, 30)
+        self.Peak_Processing_button.clicked.connect(self.Peak_Smoothing_PeakID)
 
-        self.Peak_Smoothing_button = QPushButton("Peak_Smoothing", container)
-        self.Peak_Smoothing_button.setGeometry(874, 180, 100, 30)
-        self.Peak_Smoothing_button.clicked.connect(self.handle_Peak_Smoothing_button_click)
+        self.run_notes_button = QPushButton("Run Notes", container)
+        self.run_notes_button.setGeometry(874, 260, 100, 30)
+        #self.run_notes_button.clicked.connect(self.open_run_notes_dialog)
 
         self.desktop_button = QPushButton("Desktop", container)
         self.desktop_button.setGeometry(874, 680, 100, 30)
@@ -594,14 +771,149 @@ class FPLCSystemApp(QMainWindow):
             if self.fraction_collector_mode_enabled:
                 self.stop_save_acquisition()
 
-    def handle_Peak_ID_button_click(self):
-        print("Peak_ID Button clicked")
+    def Regraph_data_file(self):
+        print("ReGraph Button clicked")
+        try:
+            file_dialog = QFileDialog()
+            file_dialog.setNameFilter("CSV files (*.csv)")
+            file_dialog.setDirectory(os.path.join(self.basepath, 'Scanning_log_files'))
+            if file_dialog.exec():
+                selected_files = file_dialog.selectedFiles()
+                if selected_files:
+                    self.csv_path = selected_files[0]#  Store file path for reuse
+                    metadata = extract_metadata_from_csv(self.csv_path)
+                    replot_from_csv(
+                        basepath=self.basepath,
+                        plot_widget=self.plot_widget,
+                        run_volume=self.run_volume,
+                        max_y_value=self.max_y_value,
+                        update_plot=update_plot,
+                        csv_path=self.csv_path#  Pass the selected file
+                    )
+                    plot_title = f"<b><br>{metadata['Column_type']}: {metadata['Year/Date/Time']}</b><br>Flowrate: {metadata['Flowrate (ml/min)']} ml/min"
+                    self.plot_widget.setTitle(plot_title, size='12pt', color='w')
+                    
+        except Exception as e:
+            print(f"Error during replot: {e}")
 
-    def handle_Baseline_Corr_button_click(self):
-        print("Baseline_Corr Button, set order of polynomial and iterations of baseline calculation")
 
-    def handle_Peak_Smoothing_button_click(self):
-        print("Peak_Smoothing Button, set Savitzky-Golay window length and polyorder values")
+    def Peak_Smoothing_PeakID(self):
+        print("Peak_Smoothing Button clicked")
+        self.plot_widget.clear() #not working???
+        dialog = PeakSmoothingDialog(self)
+
+        def apply_and_plot():
+            window_length, polyorder, peak_id_on, distance, baseline_on, lam, p, max_iter = dialog.get_values()
+            try:
+                if hasattr(self, 'csv_path'):
+                    metadata = extract_metadata_from_csv(self.csv_path)
+                    df, peaks, frac_marks = smooth_and_detect_peaks(
+                        self.csv_path,
+                        window_length,
+                        polyorder,
+                        distance,
+                        baseline_correction=baseline_on,
+                        lam=lam,
+                        p=p,
+                        max_iter=max_iter
+                    )
+
+                    x = df["Eluate_Volume (ml)"]
+                    y_raw = df["Chan1_AU280 (AU)"]
+                    y_smooth = df["Chan1_AU280_Smoothed (AU)"]
+                    y_frac = df["Frac_Mark_Scaled"]
+
+                    max_y = max(y_raw.max(), y_smooth.max()) * 1.1
+                    x_max = df["RUN_VOLUME (ml)"].dropna().values[0] if "RUN_VOLUME (ml)" in df.columns and df["RUN_VOLUME (ml)"].notna().any() else x.max()
+
+                    self.plot_widget.clear()
+                    pen_raw = pg.mkPen(color='c', width=2)
+                    pen_smooth = pg.mkPen(color='g', width=2)
+                    pen_frac = pg.mkPen(color='m', width=2)
+
+                    self.plot_widget.plot(x, y_raw, pen=pen_raw, name="Raw AU280")
+                    self.plot_widget.plot(x, y_smooth, pen=pen_smooth, name="Smoothed AU280")
+                    self.plot_widget.plot(x, y_frac, pen=pen_frac, name="Fraction")
+
+                    self.plot_widget.setYRange(0, max_y)
+                    self.plot_widget.setXRange(0, x_max)
+
+                    if peak_id_on:
+                        df["Peak_ID"] = ""
+                        for i, peak in enumerate(peaks, start=1):
+                            peak_x = x.iloc[peak]
+                            peak_y = y_smooth[peak]
+                            label = pg.TextItem(text=str(i), color='w', anchor=(0.5, 1.0))
+                            label.setPos(peak_x, peak_y)
+                            self.plot_widget.addItem(label)
+                            df.at[peak, "Peak_ID"] = f"Peak_{i}"
+
+                    for i, idx in enumerate(frac_marks, start=1):
+                        mark_x = x.iloc[idx]
+                        mark_y = y_frac[idx]
+                        label = pg.TextItem(text=f"f{i}", color='w', anchor=(0.5, 1.0))
+                        label.setPos(mark_x, mark_y)
+                        self.plot_widget.addItem(label)
+
+                    column_type = metadata.get("Column_type", "Unknown Column")
+                    run_datetime = metadata.get("Year/Date/Time", "Unknown Time")
+                    flowrate = metadata.get("Flowrate (ml/min)", "N/A")
+                    plot_title = f"<b><br>{column_type}: {run_datetime}</b><br>Flowrate: {flowrate} ml/min"
+                    self.plot_widget.setTitle(plot_title, size='12pt', color='w')
+
+                    dialog.df = df
+                    dialog.metadata = metadata
+            except Exception as e:
+                print(f"Error during smoothing: {e}")
+
+        dialog.parameters_changed.connect(apply_and_plot)
+        apply_and_plot()
+        result = dialog.exec()
+
+        if result == QDialog.DialogCode.Accepted:
+            df = dialog.df
+            metadata = dialog.metadata
+            window_length, polyorder, peak_id_on, distance, baseline_on, lam, p, max_iter = dialog.get_values()
+            
+            base_name = os.path.splitext(os.path.basename(self.csv_path))[0]
+            default_dir = os.path.join(self.basepath, 'Scanning_log_files', 'Processed_data_and_plots')
+            os.makedirs(default_dir, exist_ok=True)
+            save_dir = QFileDialog.getExistingDirectory(self, "Select Save Directory", default_dir, QFileDialog.Option.ShowDirsOnly)
+
+            if save_dir:
+                processed_csv = os.path.join(save_dir, f"{base_name}_processed.csv")
+                processed_png = os.path.join(save_dir, f"{base_name}_processed.png")
+        
+                with open(processed_csv, 'w', encoding='utf-8') as f:
+                    f.write("Parameter,Value\n")
+                    #Chromatography run parameters
+                    for key in ["Column_type", "Flowrate (ml/min)", "Year/Date/Time"]:
+                        if key in metadata:
+                            f.write(f"{key},{metadata[key]}\n")
+                            
+                    # Save peak processing parameters
+                    f.write(f"AsLS Baseline,{'ON' if baseline_on else 'OFF'}\n")
+                    if baseline_on:
+                        f.write(f"AsLS lambda,{lam}\n")
+                        f.write(f"AsLS p,{p}\n")
+                        f.write(f"AsLS max_iter,{max_iter}\n")
+                    f.write(f"SG Window Length,{window_length}\n")
+                    f.write(f"SG Polynomial Order,{polyorder}\n")
+                    f.write("\n") # Blank line between metadata and data                 
+                    df[["Eluate_Volume (ml)", "Chan1_AU280 (AU)", "Chan1_AU280_Smoothed (AU)", "Frac_Mark_Scaled", "Peak_ID"]].to_csv(f, index=False)
+
+                exporter = ImageExporter(self.plot_widget.plotItem)
+                exporter.export(processed_png)
+
+                print(f"Saved: {processed_csv}")
+                print(f"Saved: {processed_png}")
+            else:
+                print("Save canceled: No directory selected.")
+        else:
+            print("Dialog closed without saving. Clearing plot.")
+            self.plot_widget.clear()
+            self.plot_widget.setTitle("")
+            self.csv_path = None            
    
     def toggle_pump_calibration(self):
         print("Pump_Calibration Button clicked")
@@ -805,6 +1117,8 @@ class FPLCSystemApp(QMainWindow):
             method_sequence = self.method_editor.get_method_sequence()
             if method_sequence and method_sequence[-1].get("End Action") == "Stop":
                 self.handle_method_stop()
+
+
 
     def stop_save_acquisition(self):
         if self.acquisition_stopped:

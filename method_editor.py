@@ -1,4 +1,4 @@
-#method_editor.py 0.4.7 revised method editor and removal of redundant button from gui
+#method_editor.py 0.4.8 added clear() method to add_step and load_method
 
 
 import json
@@ -134,6 +134,8 @@ class MethodEditor(QWidget):
         self.setLayout(layout)
 
     def add_step_dialog(self):
+        if self.main_app and hasattr(self.main_app, "plot_widget"):
+            self.main_app.plot_widget.clear()
         if not self.steps:
             # If no steps exist, insert the first step directly
             self.show_step_dialog(-1, self.add_step)# -1 so it inserts at index 0
@@ -527,6 +529,10 @@ class MethodEditor(QWidget):
         if file_name:
             with open(file_name, 'r') as f:
                 method_data = json.load(f)
+                
+            # Clear plot if main_app and plot_widget are available
+            if self.main_app and hasattr(self.main_app, "plot_widget"):
+                self.main_app.plot_widget.clear()
 
             # Load metadata
             if "metadata" in method_data:

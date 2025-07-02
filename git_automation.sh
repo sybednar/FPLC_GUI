@@ -32,7 +32,7 @@ fi
 cd /home/sybednar/FPLC_controller_venv/FPLC_server/FPLC_interface || { echo "Directory not found"; exit 1; }
 
 # Stage the files
-git add main.py gui.py method_editor.py network.py data_logger.py plotting.py listener.py git_automation.sh
+git add main.py gui.py method_editor.py network.py data_analysis.py data_logger.py plotting.py listener.py git_automation.sh
 
 # Commit the changes
 git commit -m "$commit_message"
