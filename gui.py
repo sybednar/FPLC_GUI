@@ -1,4 +1,4 @@
-#gui.py (ver0.4.8) added data analysis module
+#gui.py (ver0.4.9.1) add Run Notes, fixed Frac error dialog handling, unified year/date/time stamp, enable/diable buttons
 # Imports and setup
 import sys
 import os
@@ -12,10 +12,12 @@ from time import sleep
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QMessageBox, QVBoxLayout, QHBoxLayout,
     QWidget, QLabel, QPushButton, QComboBox, QSpinBox, QDoubleSpinBox,
-    QGridLayout, QDialog, QDialogButtonBox, QProgressBar, QFileDialog
+    QGridLayout, QDialog, QDialogButtonBox, QProgressBar, QFileDialog,
+    QLineEdit, QTextEdit, QGraphicsOpacityEffect
 )
 from PySide6.QtCore import Signal, QObject, Qt
 from PySide6.QtGui import QFont, QStandardItemModel, QStandardItem, QPalette, QColor
+
 import pyqtgraph as pg
 from pyqtgraph.exporters import ImageExporter
 import socket
@@ -407,6 +409,42 @@ class PeakSmoothingDialog(QDialog):
             self.max_iter_spin.value()
         )
 
+class NotesDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Run Notes")
+        self.setMinimumWidth(400)
+        layout = QVBoxLayout()
+
+        self.sample_input = QLineEdit()
+        self.bufferA_input = QLineEdit()
+        self.bufferB_input = QLineEdit()
+        self.notes_input = QTextEdit()
+
+        layout.addWidget(QLabel("Sample (e.g., SCD2A 1 mg/ml):"))
+        layout.addWidget(self.sample_input)
+        layout.addWidget(QLabel("Buffer A:"))
+        layout.addWidget(self.bufferA_input)
+        layout.addWidget(QLabel("Buffer B:"))
+        layout.addWidget(self.bufferB_input)
+        layout.addWidget(QLabel("Other Notes:"))
+        layout.addWidget(self.notes_input)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.setLayout(layout)
+
+    def get_notes(self):
+        return {
+            "Sample": self.sample_input.text(),
+            "Buffer_A": self.bufferA_input.text(),
+            "Buffer_B": self.bufferB_input.text(),
+            "Other_Notes": self.notes_input.toPlainText()
+        }
+
 #---------- Worker class for background data acquisition----------
 class Worker(QObject):
     data_signal = Signal(float, float, float, float, float)
@@ -509,7 +547,6 @@ class FPLCSystemApp(QMainWindow):
         self.selected_column_type = "Superdex-200"
         self.selected_AUFS_value = 0.0
         self.flowrate = 0.0
-        self.RunDateTime = datetime.strftime(datetime.now(), "%Y_%b_%d_%H%M%S")
         self.uv_monitor_FS_value = 0.1
         self.max_y_value = self.selected_AUFS_value
         self.selected_uv_monitor = "Pharmacia UV MII"
@@ -538,6 +575,9 @@ class FPLCSystemApp(QMainWindow):
         self.pump_errors = {"A": False, "B": False}
         self.current_step_index = 0
         self.method_sequence = []
+        self.run_notes_written = False
+        self.RunDateTime = None
+
 
 
         # Data storage
@@ -547,6 +587,7 @@ class FPLCSystemApp(QMainWindow):
         self.chan1_data = []
         self.chan1_AU280_data = []
         self.chan2_data = []
+        self.user_notes = {}
 
         # Setup paths and logger
         self.basepath = '/home/sybednar/FPLC_controller_venv/Measurement_Computing'
@@ -598,6 +639,8 @@ class FPLCSystemApp(QMainWindow):
         self.method_run_button = QPushButton("Run_Method", container)
         self.method_run_button.setGeometry(50, 100, 100, 30)
         self.method_run_button.clicked.connect(self.handle_method_run)
+        #self.method_run_button.setStyleSheet("border: 2px solid green; color: white;")
+
 
         self.method_pause_button = QPushButton("Pause_Method", container)
         self.method_pause_button.setGeometry(50, 180, 100, 30)
@@ -611,6 +654,8 @@ class FPLCSystemApp(QMainWindow):
         self.Regraph_button = QPushButton("ReGraph", container)
         self.Regraph_button.setGeometry(874, 100, 100, 30)
         self.Regraph_button.clicked.connect(self.Regraph_data_file)
+        #self.Regraph_button.setStyleSheet("color: blue;")
+
 
         self.Peak_Processing_button = QPushButton("Peak_Processing", container)
         self.Peak_Processing_button.setGeometry(874, 180, 100, 30)
@@ -618,7 +663,7 @@ class FPLCSystemApp(QMainWindow):
 
         self.run_notes_button = QPushButton("Run Notes", container)
         self.run_notes_button.setGeometry(874, 260, 100, 30)
-        #self.run_notes_button.clicked.connect(self.open_run_notes_dialog)
+        self.run_notes_button.clicked.connect(self.open_run_notes_dialog)
 
         self.desktop_button = QPushButton("Desktop", container)
         self.desktop_button.setGeometry(874, 680, 100, 30)
@@ -645,13 +690,77 @@ class FPLCSystemApp(QMainWindow):
         self.volume_delivered_progress_bar.setStyleSheet("QProgressBar { color: white; }")
 
         self.method_editor = MethodEditor(container, main_app=self)
-        self.method_editor.setGeometry(30, 410, 960, 240) # Adjust size and position as needed
+        self.method_editor.setGeometry(25, 420, 975, 240) # Adjust size and position as needed
 
     def handle_method_run(self):
-        self.set_solvent_button_enabled(False)
+        if not self.user_notes:
+            self.open_run_notes_dialog()       
+        if not self.run_notes_written:
+            self.RunDateTime = datetime.strftime(datetime.now(), "%Y_%b_%d_%H%M%S") #sets year/date/time stamp at beginning of run throughout 
+            self.write_run_notes_on_start()
+            self.run_notes_written = True       
+        self.set_all_buttons_enabled(False)
         self.method_sequence = self.method_editor.get_method_sequence()
         self.current_step_index = 0
         self.run_next_step()
+
+    def write_run_notes_on_start(self):
+        if not self.user_notes:
+            self.user_notes = {
+                "Sample": "",
+                "Buffer_A": "",
+                "Buffer_B": "",
+                "Other_Notes": ""
+            }
+        method_text = "\nRun Method:\n"
+        for i, step in enumerate(self.method_editor.get_method_sequence(), 1):
+            method_text += f"Step {i}: " + ", ".join(f"{k}: {v}" for k, v in step.items()) + "\n"
+        self.user_notes["Other_Notes"] += " " + method_text
+        self.notes_timestamp = datetime.strftime(datetime.now(), "%Y_%b_%d_%H%M%S")
+        self.logger.write_run_notes(self.user_notes, self.notes_timestamp)
+        
+    def set_all_buttons_enabled(self, enabled: bool):
+        """
+        Enable or disable all QPushButton widgets in the GUI,
+        except 'Pause_Method' and 'Stop_Method'.
+        'Run_Method' is enabled only when not running.
+        Dim disabled buttons using opacity and style.
+        """
+        for button in self.findChildren(QPushButton):
+            if button.text() in ["Pause_Method", "Stop_Method"]:
+                button.setEnabled(True)
+                button.setGraphicsEffect(None)
+                button.setStyleSheet("")# Reset style
+            elif button.text() == "Run_Method":
+                button.setEnabled(not self.is_running)
+                if self.is_running:
+                    effect = QGraphicsOpacityEffect()
+                    effect.setOpacity(0.4)
+                    button.setGraphicsEffect(effect)
+                    button.setStyleSheet("color: gray; background-color: #444;")
+                else:
+                    button.setGraphicsEffect(None)
+                    button.setStyleSheet("")
+            else:
+                button.setEnabled(enabled)
+                if not enabled:
+                    effect = QGraphicsOpacityEffect()
+                    effect.setOpacity(0.4)
+                    button.setGraphicsEffect(effect)
+                    button.setStyleSheet("color: gray; background-color: #444;")
+                else:
+                    button.setGraphicsEffect(None)
+                    button.setStyleSheet("")
+
+        # Dim MethodEditor widget
+        if hasattr(self, 'method_editor'):
+            self.method_editor.setEnabled(enabled)
+            if not enabled:
+                effect = QGraphicsOpacityEffect()
+                effect.setOpacity(0.4)
+                self.method_editor.setGraphicsEffect(effect)
+            else:
+                self.method_editor.setGraphicsEffect(None)
 
     def run_next_step(self):
         if self.connection is None or self.connection.fileno() == -1:
@@ -767,7 +876,8 @@ class FPLCSystemApp(QMainWindow):
                 self.handle_disconnection()
 
             self.reset_progress_bar()
-            self.set_solvent_button_enabled(True)
+            self.run_notes_written = False
+            self.set_all_buttons_enabled(True)
             if self.fraction_collector_mode_enabled:
                 self.stop_save_acquisition()
 
@@ -883,15 +993,33 @@ class FPLCSystemApp(QMainWindow):
             if save_dir:
                 processed_csv = os.path.join(save_dir, f"{base_name}_processed.csv")
                 processed_png = os.path.join(save_dir, f"{base_name}_processed.png")
-        
+
+                written_fields = set()
+
                 with open(processed_csv, 'w', encoding='utf-8') as f:
                     f.write("Parameter,Value\n")
-                    #Chromatography run parameters
-                    for key in ["Column_type", "Flowrate (ml/min)", "Year/Date/Time"]:
-                        if key in metadata:
+
+                    # Write metadata
+                    for key in ["Column_type", "Year/Date/Time"]:
+                        if key in metadata and key not in written_fields:
                             f.write(f"{key},{metadata[key]}\n")
-                            
+                            written_fields.add(key)
+
+                    # Write run notes (only once per field)
+                    notes_filename = f"{base_name}_run_notes.csv"
+                    notes_path = os.path.join(self.basepath, 'Scanning_log_files', notes_filename)
+                    if os.path.exists(notes_path):
+                        with open(notes_path, 'r', encoding='utf-8') as notes_file:
+                            reader = csv.reader(notes_file)
+                            next(reader)# Skip header
+                            for row in reader:
+                                if len(row) == 2 and row[0] not in written_fields:
+                                    f.write(f"{row[0]},{row[1]}\n")
+                                    written_fields.add(row[0])
+                        
                     # Save peak processing parameters
+                    f.write(f"\n")
+                    f.write(f"Processing parameters\n")
                     f.write(f"AsLS Baseline,{'ON' if baseline_on else 'OFF'}\n")
                     if baseline_on:
                         f.write(f"AsLS lambda,{lam}\n")
@@ -1048,8 +1176,6 @@ class FPLCSystemApp(QMainWindow):
         if self.worker is not None and self.worker.is_running:
             print("Acquisition already running.")
             return
-        
-        self.RunDateTime = datetime.strftime(datetime.now(), "%Y_%b_%d_%H%M%S")
         self.update_plot_title()
 
         self.worker = Worker(self.logger.append_data_row, self, self.selected_uv_monitor, self.selected_AUFS_value, self.connection)
@@ -1089,7 +1215,9 @@ class FPLCSystemApp(QMainWindow):
                 "UV_monitor_FS_value (Volts)": self.uv_monitor_FS_value,
                 "Flowrate (ml/min)": self.flowrate
             }
-            self.logger.write_metadata({**data_row, **metadata})
+            
+            #full_metadata = {**data_row, **metadata, **self.user_notes}
+            self.logger.write_metadata({**data_row, **metadata}) #change to self.logger.write_metadata(full_metadata)
             self.metadata_written = True
         else:
             self.logger.append_data_row(data_row)
@@ -1118,7 +1246,16 @@ class FPLCSystemApp(QMainWindow):
             if method_sequence and method_sequence[-1].get("End Action") == "Stop":
                 self.handle_method_stop()
 
-
+    def open_run_notes_dialog(self):
+        dialog = NotesDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.user_notes = dialog.get_notes()
+            self.notes_timestamp = self.RunDateTime
+            #self.notes_timestamp = datetime.strftime(datetime.now(), "%Y_%b_%d_%H%M%S")
+            #self.logger.write_run_notes(self.user_notes, self.notes_timestamp)
+            #print("Run notes saved:", self.user_notes)
+        else:
+            print("Run notes dialog canceled.")
 
     def stop_save_acquisition(self):
         if self.acquisition_stopped:
@@ -1134,7 +1271,8 @@ class FPLCSystemApp(QMainWindow):
 
         self.show_save_dialog()
         self.clear_plot_and_reset()
-        self.set_solvent_button_enabled(True)
+        self.run_notes_written = False
+        self.set_all_buttons_enabled(True)
         self.reset_progress_bar()
 
     def show_save_dialog(self):
@@ -1145,7 +1283,7 @@ class FPLCSystemApp(QMainWindow):
         dialog.exec()
 
     def save_data(self):
-        self.logger.save_final_csv_and_plot(self.plot_widget)
+        self.logger.save_final_csv_and_plot(self.plot_widget, self.RunDateTime)
         self.clear_data()
         self.plot_widget.clear()
         print('Plot cleared and system reset. Ready for next acquisition.')
@@ -1154,6 +1292,9 @@ class FPLCSystemApp(QMainWindow):
         self.acquisition_stopped = False
         self.clear_data()
         self.plot_widget.clear()
+        self.RunDateTime = None
+        self.notes_timestamp = None
+        self.run_notes_written = False
         self.update_plot_title()
         self.metadata_written = False
         self.logger.clear_data()
@@ -1178,7 +1319,12 @@ class FPLCSystemApp(QMainWindow):
         #self.start_button.setEnabled(True)
 
     def update_plot_title(self):
-        plot_title = f"<b><br>{self.selected_column_type}: {self.RunDateTime}</b><br>Flowrate: {self.flowrate: .1f} ml/min, {self.selected_uv_monitor}: {self.selected_AUFS_value: .3f} AUFS"
+        timestamp = self.RunDateTime if self.RunDateTime else "Not Started"
+        plot_title = (
+            f"<b><br>{self.selected_column_type}: {timestamp}</b>"
+            f"<br>Flowrate: {self.flowrate: .1f} ml/min, "
+            f"{self.selected_uv_monitor}: {self.selected_AUFS_value: .3f} AUFS"
+        )
         self.plot_widget.setTitle(plot_title, size='12pt', color='w')
         if self.selected_uv_monitor == "Pharmacia UV MII":
             self.max_y_value = self.selected_AUFS_value
@@ -1217,6 +1363,9 @@ class FPLCSystemApp(QMainWindow):
         self.error_dialog.label.setText(error_message)
         self.error_dialog.finished.connect(self.reset_error_dialog_flag)
         self.error_dialog.exec()
+        
+    def reset_error_dialog_flag(self): # added back in 0.4.9
+        self.error_dialog_open = False
         
     def handle_PumpA_error(self, error_message):
         self.pump_errors["A"] = True

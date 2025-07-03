@@ -1,4 +1,4 @@
-#data_logger.py
+#data_logger.py ver0.4.9 added method for writing run notes
 import os
 import csv
 from datetime import datetime
@@ -33,11 +33,36 @@ class DataLogger:
         with open('data_temp.csv', 'a', encoding='utf-8') as csvfile:
             csvwriter = csv.DictWriter(csvfile, fieldnames=self.data_fieldnames + self.metadata_fieldnames)
             csvwriter.writerow(data_row)
+            
+    def write_run_notes(self, notes_dict, timestamp):
+        notes_path = os.path.join(self.basepath, 'Scanning_log_files', f"{timestamp}_run_notes.csv")
 
-    def save_final_csv_and_plot(self, plot_widget):
+        # Separate Run Method from Other Notes
+        other_notes = notes_dict.get("Other_Notes", "")
+        run_method = ""
+        if "Run Method:" in other_notes:
+            parts = other_notes.split("Run Method:", 1)
+            notes_dict["Other_Notes"] = parts[0].strip()
+            run_method = "Run Method:\n" + parts[1].strip()
+        notes_dict["Run_Method"] = run_method
+
+        with open(notes_path, 'w', encoding='utf-8', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(["Field", "Value"])
+            for key, value in notes_dict.items():
+                writer.writerow([key, value])
+                if key == "Other_Notes":
+                    writer.writerow([])
+        print(f"Run notes written to {notes_path}")
+
+    def save_final_csv_and_plot(self, plot_widget, timestamp):
         if os.path.exists('data_temp.csv'):
-            fileDateTime = datetime.strftime(datetime.now(), "%Y_%B_%d_%H%M%S") + ".csv"
-            plotDateTime = datetime.strftime(datetime.now(), "%Y_%B_%d_%H%M%S") + ".png"
+            #fileDateTime = datetime.strftime(datetime.now(), "%Y_%B_%d_%H%M%S") + ".csv"
+            #plotDateTime = datetime.strftime(datetime.now(), "%Y_%B_%d_%H%M%S") + ".png"        
+            
+            fileDateTime = timestamp + ".csv"
+            plotDateTime = timestamp + ".png"
+            
             mypath = os.path.join(self.basepath, 'Scanning_log_files')
             os.rename('data_temp.csv', os.path.join(mypath, fileDateTime))
             print('CSV File saved as', os.path.join(mypath, fileDateTime))

@@ -1,11 +1,11 @@
-#method_editor.py 0.4.8 added clear() method to add_step and load_method
-
+#method_editor.py 0.4.9.1
+#Fix Floating Point Precision in Flowrate, modify delete function, enable/disable button function 
 
 import json
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTableWidget, QGridLayout,
     QTableWidgetItem, QFileDialog, QDialog, QDialogButtonBox, QSpinBox, QDoubleSpinBox,
-    QComboBox, QMessageBox
+    QComboBox, QMessageBox, QCheckBox
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPalette, QColor, QBrush
@@ -98,6 +98,11 @@ class MethodEditor(QWidget):
 
         # Updated to 8 columns (merged PumpB Min/Max into Pump Mode)
         self.table = QTableWidget(0, 9)
+        self.table.setStyleSheet("border: 1px solid white;")    
+        self.table.verticalHeader().setVisible(False)
+        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
         self.table.setHorizontalHeaderLabels([
             "Step Number", "System Valve", "Flowrate (ml/min)", "Run Volume (ml)",
             "Pump Mode", "Frac Collect", "Monitor", "Diverter", "End Action"
@@ -154,7 +159,37 @@ class MethodEditor(QWidget):
             dialog.accept()
 
     def delete_step_dialog(self):
-        self._step_index_dialog("Delete step #", len(self.steps) - 1, self.delete_step)
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Delete Step")
+        layout = QVBoxLayout(dialog)
+
+        label = QLabel("Delete Step Number:")
+        spin = QSpinBox()
+        spin.setRange(1, len(self.steps))
+        spin.setValue(1)
+
+        checkbox = QCheckBox("Delete All Steps:")
+        layout.addWidget(label)
+        layout.addWidget(spin)
+        layout.addWidget(checkbox)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        layout.addWidget(buttons)
+
+        def on_accept():
+            if checkbox.isChecked():
+                self.steps.clear()
+                self.update_table()
+            else:
+                index = spin.value() - 1
+                if 0 <= index < len(self.steps):
+                    del self.steps[index]
+                    self.update_table()
+            dialog.accept()
+
+        buttons.accepted.connect(on_accept)
+        buttons.rejected.connect(dialog.reject)
+        dialog.exec()
 
     def _step_insert_dialog(self):
         dialog = QDialog(self)
@@ -378,8 +413,8 @@ class MethodEditor(QWidget):
             step_data = {
                 "Column Type": column_type_combo.currentText(),
                 "System Valve": valve_combo.currentText(),
-                "Flowrate (ml/min)": flowrate_spin.value(),
-                "Run Volume (ml)": volume_spin.value(),
+                "Flowrate (ml/min)": round(flowrate_spin.value(), 2),
+                "Run Volume (ml)": round(volume_spin.value(), 2),
                 "Pump Mode": pump_mode_combo.currentText(),
                 "PumpB Gradient": {
                 "Min": pumpB_min_spin.value(),
@@ -501,8 +536,12 @@ class MethodEditor(QWidget):
                 step["Diverter"],
                 step["End Action"]
             ]
-            for j, val in enumerate(values):
-                self.table.setItem(i, j, QTableWidgetItem(str(val)))
+            #for j, val in enumerate(values):
+                #self.table.setItem(i, j, QTableWidgetItem(str(val)))
+            for j, val in enumerate(values):#centered parameters
+                item = QTableWidgetItem(str(val))
+                item.setTextAlignment(Qt.AlignCenter)
+                self.table.setItem(i, j, item)
 
     def save_method(self):
         file_name, _ = QFileDialog.getSaveFileName(

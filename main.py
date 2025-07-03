@@ -18,6 +18,8 @@ def set_dark_theme(app):
     dark_palette.setColor(QPalette.ColorRole.BrightText, QColor(255, 0, 0))
     dark_palette.setColor(QPalette.ColorRole.Link, QColor(42, 130, 218))
     app.setPalette(dark_palette)
+    #app.setStyleSheet("QPushButton { border: 1px solid white; color: white; }")
+
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

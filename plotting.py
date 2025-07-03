@@ -10,6 +10,8 @@ def create_plot_widget(parent):
     plot_widget.setLabel('bottom', 'Volume (ml)')
     plot_widget.setYRange(0, 0.2)
     plot_widget.setXRange(0, 20)
+    
+    plot_widget.setStyleSheet("border: 1px solid white;")
     return plot_widget
 
 def update_plot(plot_widget, elapsed_time_data, eluate_volume_data,
