@@ -1,5 +1,5 @@
-#method_editor.py 0.4.9.1
-#Fix Floating Point Precision in Flowrate, modify delete function, enable/disable button function 
+#method_editor.py 0.4.9.2
+#added monitor settings buttons to add and edit step dialog 
 
 import json
 from PySide6.QtWidgets import (
@@ -264,6 +264,10 @@ class MethodEditor(QWidget):
 
         monitor_combo = QComboBox()
         monitor_combo.addItems(["UV_ON", "UV_OFF"])
+        
+        monitor_settings_label = QLabel("Monitor Settings")
+        monitor_settings_btn = QPushButton("Edit Settings")
+        monitor_settings_btn.setEnabled(False) # Initially disabled
 
         divert_combo = QComboBox()
         divert_combo.addItems(["ON", "OFF"])
@@ -271,6 +275,15 @@ class MethodEditor(QWidget):
         end_action_combo = QComboBox()
         end_action_combo.addItems(["Continue", "Pause", "Stop"])
 
+        def update_monitor_settings_button_state(text):
+            is_enabled = text == "UV_ON"
+            monitor_settings_btn.setEnabled(is_enabled)
+            if is_enabled:
+                monitor_settings_btn.setStyleSheet("")# Reset to default
+                monitor_settings_label.setStyleSheet("color: white;")
+            else:
+                monitor_settings_btn.setStyleSheet("color: gray; background-color: #2e2e2e;")
+                monitor_settings_label.setStyleSheet("color: gray;")
         # --- UV Monitor settings ---
         uv_monitor_type = "Pharmacia UV MII"
         aufs_value = 0.1
@@ -286,7 +299,10 @@ class MethodEditor(QWidget):
                     self.main_app.uv_monitor_FS_value = 0.1 if uv_monitor_type == "Pharmacia UV MII" else 1.0
 
         monitor_combo.currentTextChanged.connect(lambda text: open_uv_monitor_settings() if text == "UV_ON" else None)
-
+        monitor_combo.currentTextChanged.connect(update_monitor_settings_button_state)
+        update_monitor_settings_button_state(monitor_combo.currentText())
+        monitor_settings_btn.clicked.connect(open_uv_monitor_settings)
+        
             # --- Palette helpers ---
         def apply_disabled_palette(widget):
             palette = widget.palette()
@@ -378,8 +394,10 @@ class MethodEditor(QWidget):
         # Column 4
         grid.addWidget(QLabel("Fraction Collect"), 0, 3)
         grid.addWidget(frac_combo, 1, 3)
-        grid.addWidget(QLabel("Monitor"), 4, 3)
-        grid.addWidget(monitor_combo, 5, 3)
+        grid.addWidget(QLabel("Monitor"), 2, 3)
+        grid.addWidget(monitor_combo, 3, 3)
+        grid.addWidget(monitor_settings_label, 4, 3)
+        grid.addWidget(monitor_settings_btn, 5, 3)        
 
         # Column 5
         grid.addWidget(QLabel("Diverter Valve"), 0, 4)

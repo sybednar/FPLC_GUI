@@ -1,5 +1,4 @@
-#gui.py (ver0.4.9.1) add Run Notes, fixed Frac error dialog handling, unified year/date/time stamp, enable/diable buttons
-# Imports and setup
+#gui.py (ver0.5) added monitor setting button, run_method color indicator handling
 import sys
 import os
 import csv
@@ -631,6 +630,10 @@ class FPLCSystemApp(QMainWindow):
         left_middle_label = QLabel("Method Operate", container)
         left_middle_label.setGeometry(50, 60, 100, 30)
         left_middle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        left_wash_label = QLabel("Pump Wash", container)
+        left_wash_label.setGeometry(50, 320, 100, 30)
+        left_wash_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         right_label = QLabel("Data Analysis", container)
         right_label.setGeometry(874, 60, 100, 30)
@@ -639,8 +642,6 @@ class FPLCSystemApp(QMainWindow):
         self.method_run_button = QPushButton("Run_Method", container)
         self.method_run_button.setGeometry(50, 100, 100, 30)
         self.method_run_button.clicked.connect(self.handle_method_run)
-        #self.method_run_button.setStyleSheet("border: 2px solid green; color: white;")
-
 
         self.method_pause_button = QPushButton("Pause_Method", container)
         self.method_pause_button.setGeometry(50, 180, 100, 30)
@@ -692,7 +693,24 @@ class FPLCSystemApp(QMainWindow):
         self.method_editor = MethodEditor(container, main_app=self)
         self.method_editor.setGeometry(25, 420, 975, 240) # Adjust size and position as needed
 
+    #adding stylization
+    def update_run_button_state(self, state):
+        if state == "running":
+            self.method_run_button.setStyleSheet("background-color: green; color: white;")
+        elif state == "paused":
+            self.method_run_button.setStyleSheet("background-color: yellow; color: black;")
+        elif state == "error":
+            self.method_run_button.setStyleSheet("background-color: red; color: white;")
+        else:
+            self.method_run_button.setStyleSheet("")# Reset to default
+
+
     def handle_method_run(self):
+        if self.connection is None or self.connection.fileno() == -1:
+            QMessageBox.critical(self, "Connection Error", "FPLC client is not connected. Please wait for connection.")
+            print("Run_Method clicked but client is not connected. Button will not turn green.")
+            return
+        
         if not self.user_notes:
             self.open_run_notes_dialog()       
         if not self.run_notes_written:
@@ -701,6 +719,7 @@ class FPLCSystemApp(QMainWindow):
             self.run_notes_written = True       
         self.set_all_buttons_enabled(False)
         self.method_sequence = self.method_editor.get_method_sequence()
+        self.update_run_button_state("running")
         self.current_step_index = 0
         self.run_next_step()
 
@@ -844,11 +863,19 @@ class FPLCSystemApp(QMainWindow):
             self.handle_method_stop()
 
     def handle_method_pause(self):
+        self.update_run_button_state("paused")
         print("Method Pause clicked")
         self.open_pause_dialog()
         
     def handle_method_stop(self):
+        self.update_run_button_state("default")
         print("Method Stop clicked")
+        
+        # Reset all method table row colors
+        if self.method_editor and hasattr(self.method_editor, "reset_step_row_color"):
+            for i in range(len(self.method_sequence)):
+                self.method_editor.reset_step_row_color(i)
+        
         if self.connection:
             stop_method_packet = {
                 "STOP_PUMPS": True,
@@ -1349,12 +1376,14 @@ class FPLCSystemApp(QMainWindow):
             print("RESUME_ADC sent to client")
             if self.worker is not None:
                 self.worker.resume()
+                self.update_run_button_state("running")
                 
         else:
             self.worker.pause()
             print("Paused the acquisition")
 
     def handle_fraction_collector_error(self, error_message):
+        c
         if self.error_dialog_open:
             return        
         print(f"Handling error: {error_message}")
@@ -1368,10 +1397,12 @@ class FPLCSystemApp(QMainWindow):
         self.error_dialog_open = False
         
     def handle_PumpA_error(self, error_message):
+        self.update_run_button_state("error")
         self.pump_errors["A"] = True
         self.show_pump_error_dialog()
 
     def handle_PumpB_error(self, error_message):
+        self.update_run_button_state("error")
         self.pump_errors["B"] = True
         self.show_pump_error_dialog()
 
