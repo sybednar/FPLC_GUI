@@ -1,4 +1,4 @@
-#data_logger.py ver0.4.9 added method for writing run notes
+#data_logger.py ver 0.5.0
 import os
 import csv
 from datetime import datetime

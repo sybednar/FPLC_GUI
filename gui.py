@@ -1,4 +1,5 @@
-#gui.py (ver0.5) added monitor setting button, run_method color indicator handling
+#gui.py (ver0.5.0) added monitor setting button, Run, Pause, Stop_Method button color indicator handling
+#adding plotting of pumpB percent
 import sys
 import os
 import csv
@@ -22,6 +23,7 @@ from pyqtgraph.exporters import ImageExporter
 import socket
 import json
 import pandas as pd
+import numpy as np
 from network import FPLCServer
 from hardware import set_gpio17, toggle_gpio17
 from plotting import create_plot_widget, update_plot
@@ -265,7 +267,8 @@ class PeakSmoothingDialog(QDialog):
         self.open_data_button = QPushButton("Open Data File")
         main_layout.addWidget(self.open_data_button)
         if parent and hasattr(parent, 'Regraph_data_file'):
-            self.open_data_button.clicked.connect(parent.Regraph_data_file)
+            self.open_data_button.clicked.connect(lambda: parent.Regraph_data_file(show_exit_dialog=False))
+            #self.open_data_button.clicked.connect(parent.Regraph_data_file)
 
         # --- Section Headers ---
         self.left_header = QLabel("<b>Baseline Correction</b>")
@@ -446,7 +449,7 @@ class NotesDialog(QDialog):
 
 #---------- Worker class for background data acquisition----------
 class Worker(QObject):
-    data_signal = Signal(float, float, float, float, float)
+    data_signal = Signal(float, float, float, float, float, float)
     finished = Signal()
     error_signal = Signal(str)
     error_cleared_signal = Signal(str)
@@ -479,22 +482,33 @@ class Worker(QObject):
         # This is called by the centralized listener
 
         values = message.split(',')
-        if len(values) == 5:
+        if len(values) == 6:  #changed from 5 to 6 09-27-25
             try:
                 value1 = int(values[0])
                 value2 = int(values[1])
                 elapsed_time = float(values[2])
                 eluate_volume = float(values[3])
                 frac_mark = float(values[4])
-                Chan1 = (value1 / 32768.0) * 0.256
-                Chan2 = (value2 / 32768.0) * 0.256
+                pumpB_percent = float(values[5]) #line added 09-27-25
+                #Chan1 = (value1 / 32768.0) * 0.256
+                #Chan2 = (value2 / 32768.0) * 0.256 #replaced with code below 090325
+                
+                # Determine full-scale voltage based on monitor type
+                if self.selected_uv_monitor == "Uvcord SII":
+                    fs_voltage = 1.024
+                else:
+                    fs_voltage = 0.256
+
+                Chan1 = (value1 / 32768.0) * fs_voltage
+                Chan2 = (value2 / 32768.0) * fs_voltage
+                
                 if self.selected_uv_monitor == "Pharmacia UV MII":
                     Chan1_AU280 = max(0.001, round(Chan1 * (self.selected_AUFS_value / 0.1), 4))
-                elif self.selected_uv_monitor == "BioRad EM1":
+                elif self.selected_uv_monitor == "Uvcord SII":
                     Chan1_AU280 = max(0.001, round(Chan1 * (self.selected_AUFS_value / 1.0), 4))
                 else:
                     Chan1_AU280 = Chan1
-                self.data_signal.emit(elapsed_time, frac_mark, Chan1, Chan1_AU280, Chan2)
+                self.data_signal.emit(elapsed_time, frac_mark, Chan1, Chan1_AU280, Chan2, pumpB_percent)
             except ValueError: 
                 print("Error parsing acquisition data:", message)
         else:
@@ -586,6 +600,7 @@ class FPLCSystemApp(QMainWindow):
         self.chan1_data = []
         self.chan1_AU280_data = []
         self.chan2_data = []
+        self.pumpB_percent_data = []
         self.user_notes = {}
 
         # Setup paths and logger
@@ -597,7 +612,7 @@ class FPLCSystemApp(QMainWindow):
         ]
         self.data_fieldnames = [
         "Elapsed_Time (sec)", "Eluate_Volume (ml)", "Frac_Mark",
-        "Chan1 (volt)", "Chan1_AU280 (AU)", "Chan2"
+        "Chan1 (volt)", "Chan1_AU280 (AU)", "Chan2", "PumpB_percent"
         ]
         self.logger = DataLogger(self.basepath, self.metadata_fieldnames, self.data_fieldnames)
 
@@ -635,7 +650,7 @@ class FPLCSystemApp(QMainWindow):
         left_wash_label.setGeometry(50, 320, 100, 30)
         left_wash_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        right_label = QLabel("Data Analysis", container)
+        right_label = QLabel("Chromatogram", container)
         right_label.setGeometry(874, 60, 100, 30)
         right_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -652,13 +667,14 @@ class FPLCSystemApp(QMainWindow):
         self.method_stop_button.clicked.connect(self.handle_method_stop)
 
         # Right-side buttons
-        self.Regraph_button = QPushButton("ReGraph", container)
+        self.Regraph_button = QPushButton("Plot View", container)
         self.Regraph_button.setGeometry(874, 100, 100, 30)
-        self.Regraph_button.clicked.connect(self.Regraph_data_file)
+        self.Regraph_button.clicked.connect(lambda: self.Regraph_data_file(show_exit_dialog=True))
+        #self.Regraph_button.clicked.connect(self.Regraph_data_file)
         #self.Regraph_button.setStyleSheet("color: blue;")
 
 
-        self.Peak_Processing_button = QPushButton("Peak_Processing", container)
+        self.Peak_Processing_button = QPushButton("Peak_ID", container)
         self.Peak_Processing_button.setGeometry(874, 180, 100, 30)
         self.Peak_Processing_button.clicked.connect(self.Peak_Smoothing_PeakID)
 
@@ -704,6 +720,12 @@ class FPLCSystemApp(QMainWindow):
         else:
             self.method_run_button.setStyleSheet("")# Reset to default
 
+    def restore_run_button_state_after_error(self):
+        if self.worker and self.worker.is_running:
+            if self.worker.pause_event.is_set():
+                self.update_run_button_state("running")
+            else:
+                self.update_run_button_state("paused")
 
     def handle_method_run(self):
         if self.connection is None or self.connection.fileno() == -1:
@@ -720,6 +742,8 @@ class FPLCSystemApp(QMainWindow):
         self.set_all_buttons_enabled(False)
         self.method_sequence = self.method_editor.get_method_sequence()
         self.update_run_button_state("running")
+        self.method_pause_button.setStyleSheet("background-color: yellow; color: black;")
+        self.method_stop_button.setStyleSheet("background-color: red; color: white;")
         self.current_step_index = 0
         self.run_next_step()
 
@@ -815,7 +839,8 @@ class FPLCSystemApp(QMainWindow):
             "FLOWRATE": self.flowrate,
             "VOLUME": self.run_volume,
             "DIVERTER_VALVE": step["Diverter"],
-            "START_PUMPS": True
+            "START_PUMPS": True,
+            "UV_MONITOR_TYPE": self.selected_uv_monitor #added 090325
         }
         #if self.fraction_collector_mode_enabled: #removed ver 4.6.5
         if step.get("Monitor", "UV_OFF") == "UV_ON": #added ver 4.6.5
@@ -893,7 +918,7 @@ class FPLCSystemApp(QMainWindow):
                 stop_method_packet["STOP_FRAC"] = True
 
             if self.divert_valve_mode:
-                stop_method_packet["DIVERTER_VALVE"] = False
+                stop_method_packet["DIVERTER_VALVE"] = False # could delete as default setting in client when stop is "OFF" 
 
             try:
                 self.connection.sendall(f'METHOD_STOP_JSON:{json.dumps(stop_method_packet)}'.encode('utf-8'))
@@ -904,11 +929,13 @@ class FPLCSystemApp(QMainWindow):
 
             self.reset_progress_bar()
             self.run_notes_written = False
+            self.method_pause_button.setStyleSheet("")
+            self.method_stop_button.setStyleSheet("")
             self.set_all_buttons_enabled(True)
             if self.fraction_collector_mode_enabled:
                 self.stop_save_acquisition()
 
-    def Regraph_data_file(self):
+    def Regraph_data_file(self, show_exit_dialog=True):
         print("ReGraph Button clicked")
         try:
             file_dialog = QFileDialog()
@@ -929,18 +956,38 @@ class FPLCSystemApp(QMainWindow):
                     )
                     plot_title = f"<b><br>{metadata['Column_type']}: {metadata['Year/Date/Time']}</b><br>Flowrate: {metadata['Flowrate (ml/min)']} ml/min"
                     self.plot_widget.setTitle(plot_title, size='12pt', color='w')
-                    
+
+                    if show_exit_dialog:
+                        # Extract filename from path
+                        filename = os.path.basename(self.csv_path) if self.csv_path else "ReGraph"
+
+                        exit_dialog = QMessageBox(self)
+                        #exit_dialog.setWindowTitle(filename)  # Show current file name
+                        exit_dialog.setWindowTitle("Plot view")
+                        exit_dialog.setText("Click Close to clear the plot and exit.")
+                        exit_dialog.setStandardButtons(QMessageBox.Close)
+                        exit_dialog.setDefaultButton(QMessageBox.Close)
+
+                        response = exit_dialog.exec()
+                        if response == QMessageBox.Close:
+                            self.clear_plot_and_reset()
+                            self.csv_path = None
+                            print("Plot cleared and system reset after ReGraph.")
+
+
         except Exception as e:
             print(f"Error during replot: {e}")
-
-
+ 
     def Peak_Smoothing_PeakID(self):
         print("Peak_Smoothing Button clicked")
-        self.plot_widget.clear() #not working???
+        # Clear plot and reset before analysis
+        self.clear_plot_and_reset()
         dialog = PeakSmoothingDialog(self)
-
+        dialog.rejected.connect(self.clear_plot_and_reset)
+  
         def apply_and_plot():
             window_length, polyorder, peak_id_on, distance, baseline_on, lam, p, max_iter = dialog.get_values()
+
             try:
                 if hasattr(self, 'csv_path'):
                     metadata = extract_metadata_from_csv(self.csv_path)
@@ -959,7 +1006,6 @@ class FPLCSystemApp(QMainWindow):
                     y_raw = df["Chan1_AU280 (AU)"]
                     y_smooth = df["Chan1_AU280_Smoothed (AU)"]
                     y_frac = df["Frac_Mark_Scaled"]
-
                     max_y = max(y_raw.max(), y_smooth.max()) * 1.1
                     x_max = df["RUN_VOLUME (ml)"].dropna().values[0] if "RUN_VOLUME (ml)" in df.columns and df["RUN_VOLUME (ml)"].notna().any() else x.max()
 
@@ -971,10 +1017,53 @@ class FPLCSystemApp(QMainWindow):
                     self.plot_widget.plot(x, y_raw, pen=pen_raw, name="Raw AU280")
                     self.plot_widget.plot(x, y_smooth, pen=pen_smooth, name="Smoothed AU280")
                     self.plot_widget.plot(x, y_frac, pen=pen_frac, name="Fraction")
+                                       
+                    # --- PumpB % Plotting (Reference Only; not smoothed) ---
+                    if 'PumpB_percent' in df.columns and df['PumpB_percent'].notna().any() and df['PumpB_percent'].any():
+                        x = df["Eluate_Volume (ml)"]
+                        pumpB_percent_data = df['PumpB_percent'].values
+
+                        # Initialize right axis if not already present
+                        if not hasattr(self.plot_widget, 'right_axis') or self.plot_widget.right_axis is None:
+                            right_axis = pg.ViewBox()
+                            self.plot_widget.scene().addItem(right_axis)
+                            self.plot_widget.getPlotItem().showAxis('right')
+                            self.plot_widget.getPlotItem().getAxis('right').linkToView(right_axis)
+                            self.plot_widget.getPlotItem().getAxis('right').setLabel('PumpB %', units='%')
+                            right_axis.setXLink(self.plot_widget)
+                            self.plot_widget.right_axis = right_axis
+                            self.plot_widget.getPlotItem().getAxis('right').setRange(0, 100)
+                            self.plot_widget.right_axis.setYRange(0, 100)
+
+                        # Clear previous PumpB plot if any
+                        if hasattr(self.plot_widget, 'right_axis') and self.plot_widget.right_axis is not None:
+                            self.plot_widget.right_axis.clear()
+
+                        # Plot PumpB % as dashed red line
+                        pen_pumpB = pg.mkPen(color='r', width=2, style=pg.QtCore.Qt.DashLine)
+                        curve_pumpB = pg.PlotCurveItem(x=x.values, y=pumpB_percent_data, pen=pen_pumpB, name='PumpB %')
+                        self.plot_widget.right_axis.addItem(curve_pumpB)
+                        
+                        # Prevent duplicate legend entry
+                        legend_items = [item[1].text for item in self.plot_widget.plotItem.legend.items]
+                        if 'PumpB %' not in legend_items:
+                            self.plot_widget.plotItem.legend.addItem(curve_pumpB, 'PumpB %')
+
+
+                        # Sync right axis view
+                        def update_views():
+                            if hasattr(self.plot_widget, 'right_axis') and self.plot_widget.right_axis is not None:
+                                self.plot_widget.right_axis.setGeometry(self.plot_widget.getPlotItem().vb.sceneBoundingRect())
+                                self.plot_widget.right_axis.linkedViewChanged(self.plot_widget.getPlotItem().vb, self.plot_widget.right_axis.XAxis)
+
+                        self.plot_widget.getPlotItem().vb.sigResized.connect(update_views)
+
+
 
                     self.plot_widget.setYRange(0, max_y)
                     self.plot_widget.setXRange(0, x_max)
 
+                    # Peak labeling
                     if peak_id_on:
                         df["Peak_ID"] = ""
                         for i, peak in enumerate(peaks, start=1):
@@ -985,12 +1074,12 @@ class FPLCSystemApp(QMainWindow):
                             self.plot_widget.addItem(label)
                             df.at[peak, "Peak_ID"] = f"Peak_{i}"
 
-                    for i, idx in enumerate(frac_marks, start=1):
-                        mark_x = x.iloc[idx]
-                        mark_y = y_frac[idx]
-                        label = pg.TextItem(text=f"f{i}", color='w', anchor=(0.5, 1.0))
-                        label.setPos(mark_x, mark_y)
-                        self.plot_widget.addItem(label)
+                        for i, idx in enumerate(frac_marks, start=1):
+                            mark_x = x.iloc[idx]
+                            mark_y = y_frac[idx]
+                            label = pg.TextItem(text=f"f{i}", color='w', anchor=(0.5, 1.0))
+                            label.setPos(mark_x, mark_y)
+                            self.plot_widget.addItem(label)
 
                     column_type = metadata.get("Column_type", "Unknown Column")
                     run_datetime = metadata.get("Year/Date/Time", "Unknown Time")
@@ -1000,6 +1089,7 @@ class FPLCSystemApp(QMainWindow):
 
                     dialog.df = df
                     dialog.metadata = metadata
+
             except Exception as e:
                 print(f"Error during smoothing: {e}")
 
@@ -1214,11 +1304,12 @@ class FPLCSystemApp(QMainWindow):
         self.thread = threading.Thread(target=self.worker.run, name="WorkerThread")
         self.thread.start()
 
-    def update_plot_data(self, elapsed_time, frac_mark, Chan1, Chan1_AU280, Chan2):
+    def update_plot_data(self, elapsed_time, frac_mark, Chan1, Chan1_AU280, Chan2, pumpB_percent): #added , pumpB_percent 09-27-25
         self.elapsed_time_data.append(elapsed_time)
         self.chan1_data.append(Chan1)
         self.chan1_AU280_data.append(Chan1_AU280)
         self.chan2_data.append(Chan2)
+        self.pumpB_percent_data.append(pumpB_percent)
 
         eluate_volume = elapsed_time * (self.flowrate / 60)
         self.eluate_volume_data.append(eluate_volume)
@@ -1229,7 +1320,8 @@ class FPLCSystemApp(QMainWindow):
             "Frac_Mark": frac_mark,
             "Chan1 (volt)": Chan1,
             "Chan1_AU280 (AU)": Chan1_AU280,
-            "Chan2": Chan2
+            "Chan2": Chan2,
+            "PumpB_percent": pumpB_percent
         }
 
         if not self.metadata_written:
@@ -1263,7 +1355,8 @@ class FPLCSystemApp(QMainWindow):
             self.chan2_data,
             self.frac_mark_data,
             self.run_volume,
-            self.max_y_value
+            self.max_y_value,
+            self.pumpB_percent_data
         )
 
         if eluate_volume >= self.run_volume:
@@ -1299,6 +1392,8 @@ class FPLCSystemApp(QMainWindow):
         self.show_save_dialog()
         self.clear_plot_and_reset()
         self.run_notes_written = False
+        self.method_pause_button.setStyleSheet("")
+        self.method_stop_button.setStyleSheet("")
         self.set_all_buttons_enabled(True)
         self.reset_progress_bar()
 
@@ -1319,6 +1414,47 @@ class FPLCSystemApp(QMainWindow):
         self.acquisition_stopped = False
         self.clear_data()
         self.plot_widget.clear()
+
+        # Clear the legend (added to clear pumpB % legend)
+        if self.plot_widget.plotItem.legend:
+            try:
+                self.plot_widget.plotItem.legend.clear()
+                print("Legend cleared successfully.")
+            except Exception as e:
+                print(f"Error clearing legend: {e}")
+
+        # Safely clear PumpB axis
+        try:
+            if hasattr(self.plot_widget, 'right_axis') and self.plot_widget.right_axis is not None:
+                try:
+                    if self.plot_widget.right_axis.scene() is self.plot_widget.scene():
+                        self.plot_widget.scene().removeItem(self.plot_widget.right_axis)
+                except Exception as e:
+                    print(f"[DEBUG] removeItem failed: {e}")
+
+                try:
+                    right_axis_obj = self.plot_widget.getPlotItem().getAxis('right')
+                    if right_axis_obj is not None:
+                        self.plot_widget.getPlotItem().hideAxis('right')
+                except Exception as e:
+                    print(f"[DEBUG] axis hide failed: {e}")
+
+                try:
+                    self.plot_widget.right_axis.setParentItem(None)
+                except Exception as e:
+                    print(f"[DEBUG] setParentItem(None) failed: {e}")
+
+                # Optional: disconnect sigResized
+                try:
+                    self.plot_widget.getPlotItem().vb.sigResized.disconnect()
+                except Exception:
+                    pass  # Ignore if not connected
+
+                self.plot_widget.right_axis = None
+                print("PumpB axis cleared successfully.")
+        except Exception as e:
+            print(f"Error clearing PumpB axis: {e}")
+       
         self.RunDateTime = None
         self.notes_timestamp = None
         self.run_notes_written = False
@@ -1338,6 +1474,7 @@ class FPLCSystemApp(QMainWindow):
         self.chan1_data.clear()
         self.chan1_AU280_data.clear()
         self.chan2_data.clear()
+        self.pumpB_percent_data.clear()
         print('Data cleared. Ready for next acquisition.')
 
     #def enable_buttons(self):
@@ -1355,8 +1492,8 @@ class FPLCSystemApp(QMainWindow):
         self.plot_widget.setTitle(plot_title, size='12pt', color='w')
         if self.selected_uv_monitor == "Pharmacia UV MII":
             self.max_y_value = self.selected_AUFS_value
-        elif self.selected_uv_monitor == "BioRad EM1":
-            self.max_y_value = 0.1 * self.selected_AUFS_value
+        elif self.selected_uv_monitor == "Uvcord SII":
+            self.max_y_value = self.selected_AUFS_value
         self.plot_widget.setYRange(0, self.max_y_value)
 
 
@@ -1383,7 +1520,7 @@ class FPLCSystemApp(QMainWindow):
             print("Paused the acquisition")
 
     def handle_fraction_collector_error(self, error_message):
-        c
+        self.update_run_button_state("error")
         if self.error_dialog_open:
             return        
         print(f"Handling error: {error_message}")
@@ -1409,11 +1546,13 @@ class FPLCSystemApp(QMainWindow):
     def handle_PumpA_error_cleared(self, message):
         self.pump_errors["A"] = False
         self.update_or_close_pump_error_dialog()
+        self.restore_run_button_state_after_error()
 
     def handle_PumpB_error_cleared(self, message):
         self.pump_errors["B"] = False
         self.update_or_close_pump_error_dialog()
-        
+        self.restore_run_button_state_after_error()
+
     def show_pump_error_dialog(self):
         if not hasattr(self, 'pump_error_dialog') or not self.pump_error_dialog.isVisible():
             self.pump_error_dialog = PumpErrorDialog(self)
@@ -1434,6 +1573,7 @@ class FPLCSystemApp(QMainWindow):
             print(f"Dialog visible: {self.error_dialog.isVisible()}")
             self.error_dialog.set_error_cleared()
             self.error_dialog.exit_error_dialog()
+        self.restore_run_button_state_after_error()
 
     def handle_valve_error(self, message):
         QMessageBox.critical(self, "Valve Error", message)

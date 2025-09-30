@@ -1,5 +1,4 @@
-#method_editor.py 0.4.9.2
-#added monitor settings buttons to add and edit step dialog 
+#method_editor.py ver 0.5.0 
 
 import json
 from PySide6.QtWidgets import (
@@ -17,14 +16,15 @@ DEFAULT_METHOD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class UVMonitorSettingsDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, current_uv_monitor="Pharmacia UV MII", current_aufs=0.1):
         super().__init__(parent)
         self.setWindowTitle("UV Monitor Settings")
         self.setMinimumWidth(300)
         layout = QVBoxLayout()
 
         self.uv_monitor_combo = QComboBox()
-        self.uv_monitor_combo.addItems(["Pharmacia UV MII", "BioRad EM1"])
+        self.uv_monitor_combo.addItems(["Pharmacia UV MII", "Uvcord SII"])
+        self.uv_monitor_combo.setCurrentText(current_uv_monitor)
         layout.addWidget(QLabel("UV Monitor Type:"))
         layout.addWidget(self.uv_monitor_combo)
 
@@ -33,7 +33,7 @@ class UVMonitorSettingsDialog(QDialog):
         layout.addWidget(self.aufs_combo)
 
         self.uv_monitor_combo.currentTextChanged.connect(self.update_aufs_items)
-        self.update_aufs_items()
+        self.update_aufs_items(current_aufs)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
@@ -42,13 +42,20 @@ class UVMonitorSettingsDialog(QDialog):
 
         self.setLayout(layout)
 
-    def update_aufs_items(self):
+    def update_aufs_items(self, current_aufs=None):
         uv_type = self.uv_monitor_combo.currentText()
         self.aufs_combo.clear()
-        if uv_type == "BioRad EM1":
-            self.aufs_combo.addItems(["2.000", "1.000", "0.500", "0.200", "0.100", "0.050", "0.020", "0.010"])
+        if uv_type == "Uvcord SII":
+            values = ["2.000", "1.000", "0.500", "0.200", "0.100", "0.050", "0.020", "0.010", "0.005"]
         else:
-            self.aufs_combo.addItems(["2.000", "1.000", "0.500", "0.200", "0.100", "0.050", "0.020", "0.010", "0.005", "0.002", "0.001"])
+            values = ["2.000", "1.000", "0.500", "0.200", "0.100", "0.050", "0.020", "0.010", "0.005", "0.002", "0.001"]
+        self.aufs_combo.addItems(values)
+
+        if current_aufs is not None:
+            formatted = f"{float(current_aufs):.3f}"
+            index = self.aufs_combo.findText(formatted)
+            if index != -1:
+                self.aufs_combo.setCurrentIndex(index)
 
     def get_settings(self):
         return self.uv_monitor_combo.currentText(), float(self.aufs_combo.currentText())
@@ -289,8 +296,12 @@ class MethodEditor(QWidget):
         aufs_value = 0.1
 
         def open_uv_monitor_settings():
-            nonlocal uv_monitor_type, aufs_value
-            dialog = UVMonitorSettingsDialog()
+            nonlocal uv_monitor_type, aufs_value           
+            # Pass current values to the dialog
+            dialog = UVMonitorSettingsDialog(
+                current_uv_monitor=self.main_app.selected_uv_monitor,
+                current_aufs=self.main_app.selected_AUFS_value
+            )        
             if dialog.exec() == QDialog.Accepted:
                 uv_monitor_type, aufs_value = dialog.get_settings()
                 if self.main_app:

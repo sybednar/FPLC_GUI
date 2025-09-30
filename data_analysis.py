@@ -1,4 +1,5 @@
-#data_analysis ver0.4.8 replot, AsLS baseline correction peak smoothing, peakID
+#data_analysis ver 0.5.0
+#09-29-25 enchanced replot_from_csv function to incorporate pumpB% data plotting
 import os
 import csv
 import pandas as pd
@@ -30,9 +31,10 @@ def extract_metadata_from_csv(csv_path):
 def replot_from_csv(basepath, plot_widget, run_volume, max_y_value, update_plot, csv_path=None):
     """
     Replot data from a user-selected CSV file using the existing plot_widget.
-    Plots Eluate_Volume (ml) vs Chan1_AU280 (AU) and Frac_Mark.
+    Plots Eluate_Volume (ml) vs Chan1_AU280 (AU), Chan2, Frac_Mark, and PumpB % if available.
     Sets x-axis range based on RUN_VOLUME (ml) value in the CSV metadata.
     """
+    import csv
 
     if not csv_path:
         file_dialog = QFileDialog()
@@ -50,7 +52,9 @@ def replot_from_csv(basepath, plot_widget, run_volume, max_y_value, update_plot,
 
     eluate_volume_data = []
     chan1_AU280_data = []
+    chan2_data = []
     frac_mark_flags = []
+    pumpB_percent_data = []
     extracted_run_volume = None
     headers = []
 
@@ -58,39 +62,46 @@ def replot_from_csv(basepath, plot_widget, run_volume, max_y_value, update_plot,
         reader = csv.reader(file)
         for row in reader:
             if not headers:
-                headers = [h.strip() for h in row] # Strip whitespace from headersheaders = row
+                headers = [h.strip() for h in row]
                 continue
             row_dict = dict(zip(headers, row))
             try:
                 vol = float(row_dict["Eluate_Volume (ml)"])
                 au = float(row_dict["Chan1_AU280 (AU)"])
+                chan2 = float(row_dict.get("Chan2", 0.0))
                 frac = float(row_dict.get("Frac_Mark", 0))
+                pumpB = float(row_dict.get("PumpB_percent", 0.0))
+
                 eluate_volume_data.append(vol)
                 chan1_AU280_data.append(au)
+                chan2_data.append(chan2)
                 frac_mark_flags.append(frac)
+                pumpB_percent_data.append(pumpB)
+
                 if extracted_run_volume is None and row_dict.get("RUN_VOLUME (ml)"):
                     extracted_run_volume = float(row_dict["RUN_VOLUME (ml)"])
             except (ValueError, KeyError):
                 continue
-    # Scale Frac_Mark to 10% of max absorbance
+
     max_abs = max(chan1_AU280_data) if chan1_AU280_data else 1.0
     frac_mark_data = [0.1 * max_abs if flag == 1.0 else 0.0 for flag in frac_mark_flags]
 
     if extracted_run_volume is not None:
         run_volume = extracted_run_volume
-        
-    plot_widget.setXRange(0, run_volume, padding=0)
+        plot_widget.setXRange(0, run_volume, padding=0)
 
     update_plot(
         plot_widget,
-        elapsed_time_data=[],# Not used
+        elapsed_time_data=[],  # Not used
         eluate_volume_data=eluate_volume_data,
         chan1_AU280_data=chan1_AU280_data,
-        chan2_data=[0.0] * len(chan1_AU280_data),# Placeholder
+        chan2_data=chan2_data,
         frac_mark_data=frac_mark_data,
         run_volume=run_volume,
-        max_y_value=max_y_value
+        max_y_value=max_y_value,
+        pumpB_percent_data=pumpB_percent_data
     )
+
     
 def apply_savgol_smoothing_with_frac_marks(csv_path, window_length=51, polyorder=3):
     """

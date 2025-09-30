@@ -1,4 +1,4 @@
-#listener.py ver 0.4.8
+#listener.py ver 0.5.0
 from PySide6.QtCore import QObject, Signal
 import threading
 import socket

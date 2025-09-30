@@ -1,4 +1,4 @@
-#network.py
+#network.py ver 0.5.0
 import socket
 import threading
 

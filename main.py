@@ -1,4 +1,4 @@
-#main.py
+#main.py ver 0.5.0
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QPalette, QColor
 import sys
